@@ -34,7 +34,6 @@ class UpSync:
                 print(e)
                 raise e
             print("Successfully fetched", url, "page", page, "extras", extras)
-            print("Response-xxxxxx", res_json)
             yield res_json
 
             if (next_page := res_json.get("links", {}).get("next")):
