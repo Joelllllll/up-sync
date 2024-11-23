@@ -1,0 +1,47 @@
+[{
+  "httpRequest": {
+    "method": "GET",
+    "path": "/accounts"
+  },
+  "httpResponse": {
+    "statusCode": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "data": [
+        {
+          "id": "123",
+          "type": "accounts",
+          "attributes": {
+            "displayName": "test1111",
+            "accountType": "test",
+            "ownershipType": "test",
+            "balance": {
+              "currency": "AUD",
+              "value": "1.0",
+              "valueInBaseUnits": 100
+            },
+            "createdAt": "2024-06-06T07:20:59+00:00"
+          }
+        },
+        {
+          "id": "1234",
+          "type": "accounts",
+          "attributes": {
+            "displayName": "test1111",
+            "accountType": "test",
+            "ownershipType": "test",
+            "balance": {
+              "currency": "AUD",
+              "value": "1.0",
+              "valueInBaseUnits": 100
+            },
+            "createdAt": "2024-06-06T07:20:59+00:00"
+          }
+        }
+      ]
+    }
+  }
+}
+]

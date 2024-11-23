@@ -1,0 +1,147 @@
+[
+    {
+        "httpRequest": {
+            "method": "GET",
+            "path": "/accounts/123/transactions"
+        },
+        "httpResponse": {
+            "statusCode": 200,
+            "headers": {
+                "Content-Type": "application/json"
+            },
+            "body": {
+                "data": [
+                    {
+                        "type": "transactions",
+                        "id": "o4fpqff",
+                        "attributes": {
+                            "status": "SETTLED",
+                            "rawText": "null",
+                            "description": "David Taylor",
+                            "message": "Money for the pizzas last night.",
+                            "isCategorizable": true,
+                            "holdInfo": "null",
+                            "roundUp": "null",
+                            "cashback": "null",
+                            "amount": {
+                                "currencyCode": "AUD",
+                                "value": "-59.98",
+                                "valueInBaseUnits": -5998
+                            },
+                            "foreignAmount": "null",
+                            "cardPurchaseMethod": {
+                                "cardNumberSuffix": "1234"
+                            },
+                            "settledAt": "2024-06-06T07:20:59+00:00",
+                            "createdAt": "2024-06-06T07:20:59+00:00"
+                        }
+                    }
+                ],
+                "links": {
+                    "prev": null,
+                    "next": null
+                }
+            }
+        }
+    },
+    {
+        "httpRequest": {
+            "method": "GET",
+            "path": "/accounts/1234/transactions",
+            "queryStringParameters": {
+              "page": [
+                "2"
+              ]
+            }
+          },
+        "httpResponse": {
+            "statusCode": 200,
+            "headers": {
+                "Content-Type": "application/json"
+            },
+            "body": {
+                "data": [
+                    {
+                        "type": "transactions",
+                        "id": "2",
+                        "attributes": {
+                            "status": "SETTLED",
+                            "rawText": "null",
+                            "description": "David Taylor",
+                            "message": "Money for the pizzas last night.",
+                            "isCategorizable": true,
+                            "holdInfo": "null",
+                            "roundUp": "null",
+                            "cashback": "null",
+                            "amount": {
+                                "currencyCode": "AUD",
+                                "value": "-59.98",
+                                "valueInBaseUnits": -5998
+                            },
+                            "foreignAmount": "null",
+                            "cardPurchaseMethod": {
+                                "cardNumberSuffix": "1234"
+                            },
+                            "settledAt": "2024-06-06T07:20:59+00:00",
+                            "createdAt": "2024-06-06T07:20:59+00:00"
+                        }
+                    }
+                ],
+                "links": {
+                    "prev": null,
+                    "next": null
+                }
+            }
+        }
+    },
+    {
+        "httpRequest": {
+            "method": "GET",
+            "path": "/accounts/1234/transactions",
+            "queryStringParameters": {
+                "filter[since]": [
+                    ".*"
+                ]
+            }
+        },
+        "httpResponse": {
+            "statusCode": 200,
+            "headers": {
+                "Content-Type": "application/json"
+            },
+            "body": {
+                "data": [
+                    {
+                        "type": "transactions",
+                        "id": "1",
+                        "attributes": {
+                            "status": "SETTLED",
+                            "rawText": "null",
+                            "description": "David Taylor",
+                            "message": "Money for the pizzas last night.",
+                            "isCategorizable": true,
+                            "holdInfo": "null",
+                            "roundUp": "null",
+                            "cashback": "null",
+                            "amount": {
+                                "currencyCode": "AUD",
+                                "value": "-59.98",
+                                "valueInBaseUnits": -5998
+                            },
+                            "foreignAmount": "null",
+                            "cardPurchaseMethod": {
+                                "cardNumberSuffix": "1234"
+                            },
+                            "settledAt": "2024-06-06T07:20:59+00:00",
+                            "createdAt": "2024-06-06T07:20:59+00:00"
+                        }
+                    }
+                ],
+                "links": {
+                    "prev": null,
+                    "next": "http://mockserver:1080/accounts/1234/transactions?page=2"
+                }
+            }
+        }
+    }
+]

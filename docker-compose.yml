@@ -1,0 +1,53 @@
+version: '3'
+services:
+  app:
+      build: .
+      container_name: app
+      ports:
+        - "8000:8000"
+      command: "python -m http.server 8000"
+      volumes:
+        - .:/code
+      env_file:
+        - 'app/variables.env'
+      environment:
+        MOCKSERVER_URL: 'http://mockserver:1080'
+        env: 'prod'
+      networks:
+        - metanet1
+
+  postgres:
+      image: postgres:14.1-alpine
+      container_name: postgres
+      restart: always
+      ports:
+        - '5432:5432'
+      volumes: 
+        - ./sql/create_tables.sql:/docker-entrypoint-initdb.d/create_tables.sql
+        - ./sql/data/:/docker-entrypoint-initdb.d/data/
+      env_file:
+        - 'app/variables.env'
+      networks:
+        - metanet1
+  mockserver:
+      ports:
+        - "1080:1080"
+      image: mockserver/mockserver
+      environment:
+        MOCKSERVER_LOG_LEVEL: INFO
+        MOCKSERVER_INITIALIZATION_JSON_PATH: config/mockserver/**.json
+      networks:
+        - metanet1
+  metabase:
+      image: metabase/metabase:latest
+      container_name: metabase
+      hostname: metabase
+      env_file:
+        - 'app/variables.env'
+      ports:
+        - 3000:3000
+      networks:
+        - metanet1
+networks:
+  metanet1:
+    driver: bridge

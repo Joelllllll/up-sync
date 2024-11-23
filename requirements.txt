@@ -1,0 +1,6 @@
+requests
+ipython
+pytest
+sqlalchemy
+psycopg2_binary
+freezegun
