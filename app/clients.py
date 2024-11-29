@@ -203,10 +203,8 @@ class Transactions(base):
         print("🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝")
         count = 0
         account_id = account._mapping["id"]
-        # find the latest transaction date to start pulling from
         since_param = Transactions.max_transaction_date_for_account(client.session, account_id)
         params = {"filter[since]": since_param}
-        ##TODO generate this url with a method on the transaction class
         async for record in client.async_get_request(endpoint=f"accounts/{account_id}/transactions", extras={"params": params}):
             for lst in record.get("data", []):
                 transaction = Transactions.parse_transaction(lst, account_id)
