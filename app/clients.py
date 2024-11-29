@@ -173,6 +173,7 @@ class Accounts(base):
 class Transactions(base):
     __tablename__ = "transactions"
     DEFAULT_LOOKBACK = 30
+    DATETIME_FORMAT = "%Y-%m-%dT%H:%M:%S+00:00"
 
     id = Column(String, primary_key=True)
     account_id = Column(String, ForeignKey("accounts.id"))
@@ -229,15 +230,15 @@ class Transactions(base):
     @classmethod
     def min_transaction_date_for_account(cls, session: DBClient.session, account_id: str):
         return session.query(func.min(Transactions.created_at)).\
-            filter(Transactions.account_id == account_id).scalar().strftime('%Y-%m-%dT%H:%M:%S+00:00')
+            filter(Transactions.account_id == account_id).scalar().strftime(cls.DATETIME_FORMAT)
 
     @classmethod
     def max_transaction_date_for_account(cls, session: DBClient.session, account_id: str):
         res = session.query(func.max(Transactions.created_at)).\
             filter(Transactions.account_id == account_id).scalar()
         if res:
-            return res.strftime('%Y-%m-%dT%H:%M:%S+00:00')
-        return (datetime.datetime.now() - datetime.timedelta(days=cls.DEFAULT_LOOKBACK)).strftime('%Y-%m-%dT%H:%M:%S+00:00')
+            return res.strftime(cls.DATETIME_FORMAT)
+        return (datetime.datetime.now() - datetime.timedelta(days=cls.DEFAULT_LOOKBACK)).strftime(cls.DATETIME_FORMAT)
 
     @classmethod
     def parse_transaction(cls, transaction: dict, account_id: str) -> Transactions:
