@@ -10,7 +10,7 @@ os.environ["env"] = "dev"
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "../../"))
 from app import up_sync
-from app.db import DB, Accounts, Transactions
+from app.clients import DBClient, Accounts, Transactions
 from app.test.test_db import delete_all_from_tables
 
 
@@ -81,15 +81,13 @@ def generate_transaction_response(transactions: list, account_id: str, paginate:
     }
 
 class TestSync:
-    session = DB().session
+    session = DBClient().session
     def teardown_method(self):
         delete_all_from_tables()
 
     def setup_method(self):
-        delete_all_from_tables
         up_sync.UpSync("token").sync_accounts()
 
-        
 
     def test_sync_accounts(self):
         up_sync.UpSync("token").sync_accounts()

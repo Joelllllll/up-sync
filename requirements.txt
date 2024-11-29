@@ -4,3 +4,4 @@ pytest
 sqlalchemy
 psycopg2_binary
 freezegun
+aiohttp

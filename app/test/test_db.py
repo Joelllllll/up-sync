@@ -8,12 +8,12 @@ os.environ["env"] = "dev"
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "../../"))
 
-from app.db import DB, Accounts, Transactions
+from app.clients import DBClient, Accounts, Transactions
 from sqlalchemy import MetaData, Table
 
 
 def delete_all_from_tables():
-    session = DB().session
+    session = DBClient().session
     accounts = Table('accounts', MetaData())
     transactions = Table('transactions', MetaData())
     session.execute(transactions.delete())
@@ -23,7 +23,7 @@ def delete_all_from_tables():
 
 
 def insert_transactions():
-    session = DB().session
+    session = DBClient().session
     accounts = [
         Accounts(
             id="123"
@@ -49,7 +49,7 @@ def insert_transactions():
 
 
 class TestDB:
-    session = DB().session
+    session = DBClient().session
     def teardown_class(cls):
         delete_all_from_tables()
 
@@ -58,11 +58,11 @@ class TestDB:
 
 
     def test_dev_db_string(self):
-        assert DB.db_string() == "postgresql://postgres:postgres@postgres:5432/test"
+        assert DBClient.db_string() == "postgresql://postgres:postgres@postgres:5432/test"
 
     def test_prod_db_string(self):
         os.environ["env"] = "prod"
-        assert DB.db_string() == "postgresql://postgres:postgres@postgres:5432/postgres"
+        assert DBClient.db_string() == "postgresql://postgres:postgres@postgres:5432/postgres"
         os.environ["env"] = "dev"
 
 
@@ -133,7 +133,7 @@ class TestTransactions:
         assert Transactions.max_transaction_date_for_account(self.session, "123") == "2023-12-02T00:00:00+00:00"
         assert Transactions.max_transaction_date_for_account(self.session, "321") == "2023-12-02T00:00:00+00:00"
 
-    session = DB().session
+    session = DBClient().session
     def test_min_transaction_date_for_account(self):
         insert_transactions()
         assert Transactions.min_transaction_date_for_account(self.session, "123") == "2020-01-01T00:00:00+00:00"
