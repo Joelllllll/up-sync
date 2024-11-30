@@ -13,25 +13,7 @@ from app import up_sync
 from app.clients import DBClient, Accounts, Transactions
 from app.test.test_db import delete_all_from_tables
 
-
-def upload_mockserver_expectations(expectations: list):
-    for exp in expectations:
-        resp = requests.put(
-            'http://mockserver:1080/mockserver/expectation',
-            headers={"Content-Type": "application/json"},
-            json={
-            "httpRequest": exp["httpRequest"],
-            "httpResponse": exp["httpResponse"]
-            }
-        )
-        assert resp.status_code == 201, resp.text
-
 ACTION_DATE = "2024-06-06T07:20:59+00:00"
-
-print('resetting mockserver')
-requests.put('http://mockserver:1080/mockserver/reset')
-upload_mockserver_expectations(json.loads(open("config/mockserver/accounts.json", "r").read()))
-upload_mockserver_expectations(json.loads(open("config/mockserver/transactions.json", "r").read()))
 
 ## I don't use these anymore but I'll leave them here for now
 BASE_TRANSACTION_ATTRIBUTES = {
@@ -86,6 +68,7 @@ class TestSync:
         delete_all_from_tables()
 
     def setup_method(self):
+        # uses mockserver to get data
         up_sync.UpSync("token").sync_accounts()
 
 

@@ -9,43 +9,8 @@ os.environ["env"] = "dev"
 sys.path.append(os.path.join(os.path.dirname(__file__), "../../"))
 
 from app.clients import DBClient, Accounts, Transactions
+from app.test.helpers import delete_all_from_tables, setup_test_db
 from sqlalchemy import MetaData, Table
-
-
-def delete_all_from_tables():
-    session = DBClient().session
-    accounts = Table('accounts', MetaData())
-    transactions = Table('transactions', MetaData())
-    session.execute(transactions.delete())
-    session.execute(accounts.delete())
-    session.commit()
-
-
-
-def insert_transactions():
-    session = DBClient().session
-    accounts = [
-        Accounts(
-            id="123"
-        ),
-        Accounts(
-            id="321"
-        )
-    ]
-    for account in accounts:
-        Accounts.insert(session, account)
-    assert len(Accounts.all(session)) == 2
-    transactions = [
-        {"id": "1", "account_id": "123", "created_at": "2020-01-01T00:00:00+00:00"},
-        {"id": "2", "account_id": "123", "created_at": "2024-01-01T00:00:00+00:00"},
-        {"id": "3", "account_id": "321", "created_at": "2020-01-01T00:00:00+00:00"},
-        {"id": "4", "account_id": "321", "created_at": "2022-01-01T00:00:00+00:00"},
-    ]
-
-    for transaction in transactions:
-        Transactions.insert(session, Transactions(**transaction))
-
-    assert len(Transactions.all(session)) == 4
 
 
 class TestDB:
@@ -55,7 +20,6 @@ class TestDB:
 
     def setup_class(cls):
         delete_all_from_tables()
-
 
     def test_dev_db_string(self):
         assert DBClient.db_string() == "postgresql://postgres:postgres@postgres:5432/test"
@@ -81,14 +45,14 @@ class TestDB:
         Accounts.insert(self.session, account)
         q = self.session.query(Accounts).filter(Accounts.id == "123").first()
 
-        assert q.id == "123"
-        assert q.display_name == "display name"
-        assert q.account_type == "test"
-        assert q.ownership_type == "test"
-        assert q.balance == 1.0
-        assert q.currency == "AUD"
-        assert q.value_str == "1.0"
-        assert q.value_base == 100
+        assert q.id == account.id
+        assert q.display_name == account.display_name
+        assert q.account_type == account.account_type
+        assert q.ownership_type == account.ownership_type
+        assert q.balance == account.balance
+        assert q.currency == account.currency
+        assert q.value_str == account.value_str
+        assert q.value_base == account.value_base
         assert q.created_at.__str__() == "2024-06-06 07:20:59"
 
     def test_insert_transaction(self):
@@ -110,17 +74,17 @@ class TestDB:
         Transactions.insert(self.session, transaction)
         q = self.session.query(Transactions).filter(Transactions.id == "123").first()
 
-        assert q.id == "123"
-        assert q.account_id == "123"
-        assert q.status == "SETTLED"
-        assert q.raw_text == None
-        assert q.description == "test"
-        assert q.message == "test"
-        assert q.categorizable == True
-        assert q.currency == "AUD"
-        assert q.value_str == "1.0"
-        assert q.value_base == 100
-        assert q.card_purchase_suffix == "12345"
+        assert q.id == transaction.id
+        assert q.account_id == transaction.account_id
+        assert q.status == transaction.status
+        assert q.raw_text == transaction.raw_text
+        assert q.description == transaction.description
+        assert q.message == transaction.message
+        assert q.categorizable == transaction.categorizable
+        assert q.currency == transaction.currency
+        assert q.value_str == transaction.value_str
+        assert q.value_base == transaction.value_base
+        assert q.card_purchase_suffix == transaction.card_purchase_suffix
         assert q.settled_at.__str__() == "2024-06-06 07:20:59"
         assert q.created_at.__str__() == "2024-06-06 07:20:59"
 
@@ -135,12 +99,12 @@ class TestTransactions:
 
     session = DBClient().session
     def test_min_transaction_date_for_account(self):
-        insert_transactions()
+        setup_test_db()
         assert Transactions.min_transaction_date_for_account(self.session, "123") == "2020-01-01T00:00:00+00:00"
         assert Transactions.min_transaction_date_for_account(self.session, "321") == "2020-01-01T00:00:00+00:00"
 
     def test_max_transaction_date_for_account(self):
-        insert_transactions()
+        setup_test_db()
         assert Transactions.max_transaction_date_for_account(self.session, "123") == "2024-01-01T00:00:00+00:00"
         assert Transactions.max_transaction_date_for_account(self.session, "321") == "2022-01-01T00:00:00+00:00"
 

@@ -6,14 +6,15 @@ import requests
 import asyncio
 import aiohttp
 from typing import Generator
+import logging
 
 
 from sqlalchemy import create_engine, func
 from sqlalchemy.orm import sessionmaker, declarative_base
 from sqlalchemy import Column, String, Integer, Boolean, Numeric, ForeignKey
 
-
-base = declarative_base()
+logging.basicConfig(level=logging.INFO)
+LOG = logging.getLogger(__name__)
 
 TEST_DATABASE = "test"
 
@@ -41,11 +42,19 @@ class DBClient:
         return f"postgresql://{USERNAME}:{PASSWORD}@{HOST}:{PORT}/{DB_NAME}"
 
 class UpClient():
+    class UpAuthError(Exception):
+        pass
+
     def __init__(self, token):
         self.token = token
         self.headers = {"Authorization": f"Bearer {self.token}"}
+        self.authenticate()
         self.session = DBClient().session
 
+    def authenticate(self):
+        for _ in self._get_request(endpoint="/util/ping"):
+            return LOG.info("Successfully authenticated")
+        raise self.UpAuthError("Failed to authenticate")
 
     def base_url(self) -> str:
         if os.environ.get("env") == "prod":
@@ -65,17 +74,17 @@ class UpClient():
                     try:
                         res.raise_for_status()
                     except Exception as e:
-                        print(e)
+                        LOG.error(e)
                         raise e
-                    print("Successfully fetched", url, "page", page, "extras", extras)
+                    LOG.info("Successfully fetched", url, "page", page, "extras", extras)
                     yield res_json
 
                     if (next_page := res_json.get("links", {}).get("next")):
                         url = next_page
                         page += 1
-                        print("Fetching next page", page)
+                        LOG.info("Fetching next page", page)
                         continue
-                    print("Finished pagination")
+                    LOG.info("Finished pagination")
                     break
     
 
@@ -88,20 +97,20 @@ class UpClient():
             try:
                 res.raise_for_status()
             except Exception as e:
-                print(e)
+                LOG.error(e)
                 raise e
-            print("Successfully fetched", url, "page", page, "extras", extras)
+            LOG.info("Successfully fetched", url, "page", page, "extras", extras)
             yield res_json
 
             if (next_page := res_json.get("links", {}).get("next")):
                 url = next_page
                 page += 1
-                print("Fetching next page", page)
+                LOG.info("Fetching next page", page)
                 continue
-            print("Finished pagination")
+            LOG.info("Finished pagination")
             break
 
-
+base = declarative_base()
 
 @dataclass
 class Accounts(base):
@@ -121,9 +130,9 @@ class Accounts(base):
 
     @classmethod
     def sync_accounts(cls, client: UpClient):
-        print("\n💳💳💳💳💳💳💳💳💳💳💳💳💳💳💳💳")
-        print("Syncing Accounts")
-        print("💳💳💳💳💳💳💳💳💳💳💳💳💳💳💳💳")
+        LOG.info("\n💳💳💳💳💳💳💳💳💳💳💳💳💳💳💳💳")
+        LOG.info("Syncing Accounts")
+        LOG.info("💳💳💳💳💳💳💳💳💳💳💳💳💳💳💳💳")
         count = 0
         #TODO move this to a method on  accounts class
         for res in client._get_request(endpoint="/accounts"):
@@ -131,9 +140,9 @@ class Accounts(base):
                 account = Accounts.parse_account(lst)
                 Accounts.insert(client.session, account)
                 count += 1
-        print("💳💳💳💳💳💳💳💳💳💳💳💳💳💳💳💳")
-        print(f"Successfully synced {count} accounts")
-        print("💳💳💳💳💳💳💳💳💳💳💳💳💳💳💳💳")
+        LOG.info("💳💳💳💳💳💳💳💳💳💳💳💳💳💳💳💳")
+        LOG.info(f"Successfully synced {count} accounts")
+        LOG.info("💳💳💳💳💳💳💳💳💳💳💳💳💳💳💳💳")
 
     @classmethod
     def insert(cls, session: DBClient.session, row: Accounts):
@@ -142,7 +151,7 @@ class Accounts(base):
             session.commit()
         except Exception as e:
             session.rollback()
-            print(e)
+            LOG.error(e)
 
 
     @classmethod
@@ -199,9 +208,9 @@ class Transactions(base):
 
     @classmethod
     async def _sync_transactions_for_account(cls, client: UpClient, account: Accounts):
-        print("🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝")
-        print("Syncing transactions for account", account._mapping["display_name"])
-        print("🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝")
+        LOG.info("🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝")
+        LOG.info("Syncing transactions for account", account._mapping["display_name"])
+        LOG.info("🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝")
         count = 0
         account_id = account._mapping["id"]
         since_param = Transactions.max_transaction_date_for_account(client.session, account_id)
@@ -211,8 +220,7 @@ class Transactions(base):
                 transaction = Transactions.parse_transaction(lst, account_id)
                 Transactions.insert(client.session, transaction)
                 count += 1
-        print(f"Successfully synced {count} transactions for account {account_id}")
-
+        LOG.info(f"Successfully synced {count} transactions for account {account_id}")
 
     @classmethod
     def insert(cls, session, row: Transactions):
@@ -221,7 +229,7 @@ class Transactions(base):
             session.commit()
         except Exception as e:
             session.rollback()
-            print(e)
+            LOG.error(e)
 
     @classmethod
     def all(cls, session: DBClient.session) -> list[Transactions]:
