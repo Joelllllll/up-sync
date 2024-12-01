@@ -24,8 +24,8 @@ You can shell into the app container and run the sync
  root@f4b4b4b4b4b4:/app#  ./up_sync.py --lookback 100
 ```
 
-This will sync all accounts and their transactions into an `accounts` and `transactions` table in the database
-The default lookback period is 30 days
+This will sync all accounts and their transactions into an `accounts` and `transactions` table in the database \n
+The `lookback` config is in days and is optional. The default lookback period is 30 days
 
 You can access the metabase dashboard at `http://localhost:3000` to view the data
 
