@@ -1,13 +1,15 @@
 # Up Sync
 
-
+## Installation
 Build the docker image
 ```shell
  main ~/up-sync 🍆💦 docker-compose build
 ```
 
-Run the image
-This will bring up the app, database and metabase containers
+## Running
+Bring up the docker containers,
+This will start the `app`, `postgres` and `metabase` containers (as well as `mockserver` used only for testing), credentials are in the `variables.env` file in `app/`
+
 ```shell
  main ~/up-sync 🍆💦 docker-compose up
 ```
@@ -26,3 +28,13 @@ This will sync all accounts and their transactions into an `accounts` and `trans
 The default lookback period is 30 days
 
 You can access the metabase dashboard at `http://localhost:3000` to view the data
+
+
+## Todo
+- [ ] Config to change default lookback period
+- [ ] Config to change output format (postgres, csv dump, pyspark delta tables)
+- [ ] Consume all transaction fields
+- [ ] Consume all other streams
+    - [ ] Categories
+    - [ ] Tags
+    - [ ] Attachments
