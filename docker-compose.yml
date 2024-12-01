@@ -12,6 +12,7 @@ services:
         - 'app/variables.env'
       environment:
         MOCKSERVER_URL: 'http://mockserver:1080'
+        UP_TOKEN: 'up_token'
         env: 'prod'
       networks:
         - metanet1

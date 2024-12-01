@@ -1,5 +1,6 @@
 import sys
 import os
+from datetime import datetime, timedelta
 
 from freezegun import freeze_time
 
@@ -8,7 +9,7 @@ os.environ["env"] = "dev"
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "../../"))
 
-from app.clients import DBClient, Accounts, Transactions
+from app.clients import DBClient, Accounts, Transactions, UpClient
 from app.test.helpers import delete_all_from_tables, setup_test_db
 from sqlalchemy import MetaData, Table
 
@@ -108,3 +109,30 @@ class TestTransactions:
         assert Transactions.max_transaction_date_for_account(self.session, "123") == "2024-01-01T00:00:00+00:00"
         assert Transactions.max_transaction_date_for_account(self.session, "321") == "2022-01-01T00:00:00+00:00"
 
+    def test_determine_account_filter_since_param(self):
+        "Use days ago if present"
+        setup_test_db()
+        lookback = 7
+        client = UpClient(os.environ["UP_TOKEN"], lookback=lookback)
+        date_result = Transactions.determine_account_filter_since_param(client, "123", self.session)
+        assert date_result.split("T")[0] == (datetime.today() - timedelta(days=lookback)).strftime("%Y-%m-%d")
+
+    def test_determine_account_filter_since_param_no_lookback(self):
+        "Use days ago if present, else check the earliest date for the account"
+        setup_test_db()
+        client = UpClient(os.environ["UP_TOKEN"])
+        date_result = Transactions.determine_account_filter_since_param(client, "123", self.session)
+        assert date_result == "2024-01-01T00:00:00+00:00"
+
+
+class TestUpClient:
+
+    def test_authenticate(self):
+        UpClient(os.environ["UP_TOKEN"], lookback=7).authenticate()
+
+    def test_authenticate_fail(self):
+        try:
+            UpClient("bad_token", lookback=7).authenticate()
+        except UpClient.UpAuthError:
+            return
+        assert False

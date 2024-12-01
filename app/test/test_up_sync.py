@@ -69,16 +69,16 @@ class TestSync:
 
     def setup_method(self):
         # uses mockserver to get data
-        up_sync.UpSync("token").sync_accounts()
+        up_sync.UpSync(os.environ["UP_TOKEN"]).sync_accounts()
 
 
     def test_sync_accounts(self):
-        up_sync.UpSync("token").sync_accounts()
+        up_sync.UpSync(os.environ["UP_TOKEN"]).sync_accounts()
         account = Accounts.from_id(self.session, "123")
         assert account.id == "123"
 
     def test_transaction_sync_with_pagination(self):
-        up_sync.UpSync("token").sync_transactions()
+        up_sync.UpSync(os.environ["UP_TOKEN"]).sync_transactions()
 
         # assert that the values made it into the database
         account = Accounts.from_id(self.session, "123")

@@ -4,6 +4,7 @@ import os
 import sys
 import asyncio
 import logging
+import argparse
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "../"))
 
@@ -14,8 +15,8 @@ logging.basicConfig(level=logging.INFO)
 LOG = logging.getLogger(__name__)
 
 class UpSync:
-    def __init__(self, token):
-        self.client = UpClient(token)
+    def __init__(self, token: str, lookback: int = None):
+        self.client = UpClient(token, lookback)
 
     def authenticate(self):
         try:
@@ -36,6 +37,18 @@ class UpSync:
         self.sync_transactions()
         LOG.info("Sync Complete")
 
+def parse_args():
+    parser = argparse.ArgumentParser(description="Sync Up data")
+    parser.add_argument(
+        "--lookback",
+        type=int,
+        required=False,
+        default=None,
+        help="Number of days to look back for transactions"
+    )
+    return parser.parse_args()
+
 if __name__ == "__main__":
-    up_sync = UpSync(os.environ["UP_TOKEN"])
+    args = parse_args()
+    up_sync = UpSync(os.environ["UP_TOKEN"], args.lookback)
     up_sync.sync()

@@ -45,10 +45,11 @@ class UpClient():
     class UpAuthError(Exception):
         pass
 
-    def __init__(self, token):
+    def __init__(self, token: str, lookback: int = None):
         self.token = token
         self.headers = {"Authorization": f"Bearer {self.token}"}
         self.authenticate()
+        self.lookback = lookback
         self.session = DBClient().session
 
     def authenticate(self):
@@ -96,6 +97,10 @@ class UpClient():
             res_json = res.json()
             try:
                 res.raise_for_status()
+            except requests.exceptions.HTTPError as e:
+                if e.response.status_code == 401:
+                    raise self.UpAuthError("Failed to authenticate")
+
             except Exception as e:
                 LOG.error(e)
                 raise e
@@ -199,6 +204,13 @@ class Transactions(base):
     created_at = Column(String)
 
     @classmethod
+    def determine_account_filter_since_param(cls, client: UpClient, account_id: str, session: DBClient.session):
+        # lookback takes precedence, if not given then look at the last date of transaction
+        if client.lookback:
+            return (datetime.datetime.now() - datetime.timedelta(days=client.lookback)).strftime(cls.DATETIME_FORMAT)
+        return cls.max_transaction_date_for_account(session, account_id)
+
+    @classmethod
     async def sync_transactions(cls, client: UpClient, account_ids=None):
         accounts = account_ids or client.session.query(Accounts.id, Accounts.display_name).all()
         cors = []
@@ -213,8 +225,7 @@ class Transactions(base):
         LOG.info("🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝")
         count = 0
         account_id = account._mapping["id"]
-        since_param = Transactions.max_transaction_date_for_account(client.session, account_id)
-        params = {"filter[since]": since_param}
+        params = {"filter[since]": cls.determine_account_filter_since_param(client, account_id, client.session)}
         async for record in client.async_get_request(endpoint=f"accounts/{account_id}/transactions", extras={"params": params}):
             for lst in record.get("data", []):
                 transaction = Transactions.parse_transaction(lst, account_id)
