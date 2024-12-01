@@ -76,7 +76,7 @@ class UpClient():
                     except Exception as e:
                         LOG.error(e)
                         raise e
-                    LOG.info("Successfully fetched", url, "page", page, "extras", extras)
+                    LOG.info(f"Successfully fetched {url}, page {page}, extras {extras}")
                     yield res_json
 
                     if (next_page := res_json.get("links", {}).get("next")):
@@ -99,7 +99,7 @@ class UpClient():
             except Exception as e:
                 LOG.error(e)
                 raise e
-            LOG.info("Successfully fetched", url, "page", page, "extras", extras)
+            LOG.info(f"Successfully fetched {url}, \"page:\": page, \"extras\": extras")
             yield res_json
 
             if (next_page := res_json.get("links", {}).get("next")):
@@ -209,7 +209,7 @@ class Transactions(base):
     @classmethod
     async def _sync_transactions_for_account(cls, client: UpClient, account: Accounts):
         LOG.info("🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝")
-        LOG.info("Syncing transactions for account", account._mapping["display_name"])
+        LOG.info(f"Syncing transactions for account: {account._mapping['display_name']}")
         LOG.info("🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝")
         count = 0
         account_id = account._mapping["id"]
