@@ -1,12 +1,10 @@
 # Up Sync
 
-## Installation
+## Running
 Build the docker image
 ```shell
  main ~/up-sync 🍆💦 docker-compose build
 ```
-
-## Running
 Bring up the docker containers,
 This will start the `app`, `postgres` and `metabase` containers (as well as `mockserver` used only for testing), credentials are in the `variables.env` file in `app/`
 
