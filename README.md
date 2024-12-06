@@ -35,3 +35,4 @@ You can access the metabase dashboard at `http://localhost:3000` to view the dat
     - [ ] Categories
     - [ ] Tags
     - [ ] Attachments
+- [ ] implement UV package manager
