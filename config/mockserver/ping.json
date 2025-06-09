@@ -4,18 +4,18 @@
             "method": "GET",
             "path": "/util/ping",
             "headers": {
-                "Authorization": "Bearer up_token"
+                "Authorization": "Bearer bad_token"
             }
         },
         "httpResponse": {
-            "statusCode": 200,
+            "statusCode": 401,
             "headers": {
                 "Content-Type": "application/json"
             },
             "body": {
                 "meta": {
                     "id": "2a6e40c9-31ef-4b43-af2f-b71c60747993",
-                    "statusEmoji": "⚡️"
+                    "statusEmoji": "sdsaddsa"
                 }
             }
         }
@@ -25,11 +25,11 @@
             "method": "GET",
             "path": "/util/ping",
             "headers": {
-                "Authorization": "Bearer bad_token"
+                "Authorization": "Bearer up_token"
             }
         },
         "httpResponse": {
-            "statusCode": 401,
+            "statusCode": 200,
             "headers": {
                 "Content-Type": "application/json"
             },

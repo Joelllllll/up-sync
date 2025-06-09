@@ -3,23 +3,30 @@
 ## Running
 Build the docker image
 ```shell
- main ~/up-sync 🍆💦 docker-compose build
+docker-compose build
 ```
 Bring up the docker containers,
-This will start the `app`, `postgres` and `metabase` containers (as well as `mockserver` used only for testing), credentials are in the `variables.env` file in `app/`
+This will start the `app` and `postgres` containers.
 
 ```shell
- main ~/up-sync 🍆💦 docker-compose up
+docker-compose run app bash
 ```
 
-You can shell into the app container and run the sync
+If you wish to bring up the `metabase` (for UI) or the `mockserver` (for testing) containers, you'll need to use `--profile` with compose up
+
+to run the tests
+```shell
+docker-compose up --profile mockserver
+```
+
+You'll need to export your UP token as a ENV variable
 
 ```shell
- main ~/up-sync 🍆💦 docker-compose exec app bash
+export UP_TOKEN="xxxxxxxx"
 ```
 
 ```shell
- root@f4b4b4b4b4b4:/app#  ./up_sync.py --lookback 100
+./up_sync.py --lookback 100
 ```
 
 This will sync all accounts and their transactions into an `accounts` and `transactions` table in the database \
@@ -35,4 +42,6 @@ You can access the metabase dashboard at `http://localhost:3000` to view the dat
     - [ ] Categories
     - [ ] Tags
     - [ ] Attachments
+- [ ] Sync individual streams
 - [ ] implement UV package manager
+- [ ] better error handling for requests

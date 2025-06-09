@@ -1,6 +1,8 @@
-import json
-import requests
 import glob
+import json
+
+import requests
+
 
 def upload_mockserver_expectations(expectations: list):
     for exp in expectations:

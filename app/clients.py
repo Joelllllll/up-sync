@@ -1,17 +1,16 @@
 from __future__ import annotations
-import os
-import datetime
-from dataclasses import dataclass
-import requests
+
 import asyncio
-import aiohttp
-from typing import Generator
+import datetime
 import logging
+import os
+from dataclasses import dataclass
+from typing import Generator
 
-
-from sqlalchemy import create_engine, func
-from sqlalchemy.orm import sessionmaker, declarative_base
-from sqlalchemy import Column, String, Integer, Boolean, Numeric, ForeignKey
+import aiohttp
+import requests
+from sqlalchemy import Boolean, Column, ForeignKey, Integer, Numeric, String, create_engine, func
+from sqlalchemy.orm import declarative_base, sessionmaker
 
 logging.basicConfig(level=logging.INFO)
 LOG = logging.getLogger(__name__)
@@ -100,7 +99,6 @@ class UpClient():
             except requests.exceptions.HTTPError as e:
                 if e.response.status_code == 401:
                     raise self.UpAuthError("Failed to authenticate")
-
             except Exception as e:
                 LOG.error(e)
                 raise e
@@ -226,7 +224,10 @@ class Transactions(base):
         count = 0
         account_id = account._mapping["id"]
         params = {"filter[since]": cls.determine_account_filter_since_param(client, account_id, client.session)}
-        async for record in client.async_get_request(endpoint=f"accounts/{account_id}/transactions", extras={"params": params}):
+        async for record in client.async_get_request(
+            endpoint=f"accounts/{account_id}/transactions",
+            extras={"params": params}
+        ):
             for lst in record.get("data", []):
                 transaction = Transactions.parse_transaction(lst, account_id)
                 Transactions.insert(client.session, transaction)

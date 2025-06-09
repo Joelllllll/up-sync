@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 
-import os
-import sys
+
+import argparse
 import asyncio
 import logging
-import argparse
+import os
+import sys
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "../"))
 
-from app.clients import Accounts, Transactions
-from app.clients import UpClient
+from app.clients import Accounts, Transactions, UpClient
 
 logging.basicConfig(level=logging.INFO)
 LOG = logging.getLogger(__name__)
@@ -52,3 +52,4 @@ if __name__ == "__main__":
     args = parse_args()
     up_sync = UpSync(os.environ["UP_TOKEN"], args.lookback)
     up_sync.sync()
+

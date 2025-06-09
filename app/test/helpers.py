@@ -3,8 +3,10 @@ import sys
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "../../"))
 
-from app.clients import DBClient, Accounts, Transactions
 from sqlalchemy import MetaData, Table
+
+from app.clients import Accounts, DBClient, Transactions
+
 
 def delete_all_from_tables():
     session = DBClient().session

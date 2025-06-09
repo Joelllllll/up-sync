@@ -3,3 +3,4 @@ sql/data/
 app/__pycache__
 app/test/__pycache__
 app/todo.md
+.vscode*
