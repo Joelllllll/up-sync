@@ -90,8 +90,8 @@ class TestSync:
         # 2 accounts, one of which paginates, should still only open a single session
         assert len(created) == 1
 
-    def test_transaction_sync_batches_inserts_into_a_single_commit(self):
-        "regression test: transactions should be committed in one batch, not one commit per row"
+    def test_transaction_sync_commits_per_page(self):
+        "regression test: each page should be committed as it arrives, not batched into one commit for the whole sync"
         up = up_sync.UpSync(os.environ["UP_TOKEN"])
         commit_calls = []
         original_commit = up.client.session.commit
@@ -104,7 +104,8 @@ class TestSync:
         up.sync_transactions()
 
         assert len(self.session.query(Transactions).all()) == 3
-        assert len(commit_calls) == 1
+        # account 123: 1 page, account 1234: 2 pages (pagination) -> 3 commits
+        assert len(commit_calls) == 3
 
     def test_transaction_sync_with_no_accounts(self):
         "sync_transactions should handle zero accounts in the db without crashing"

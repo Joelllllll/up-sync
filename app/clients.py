@@ -168,14 +168,13 @@ class Accounts(base):
         LOG.info("Syncing Accounts")
         LOG.info("💳💳💳💳💳💳💳💳💳💳💳💳💳💳💳💳")
         #TODO move this to a method on  accounts class
-        accounts = [
-            Accounts.parse_account(lst)
-            for res in client._get_request(endpoint="/accounts")
-            for lst in res.get("data", [])
-        ]
-        Accounts.insert_many(client.session, accounts)
+        total = 0
+        for res in client._get_request(endpoint="/accounts"):
+            accounts = [Accounts.parse_account(lst) for lst in res.get("data", [])]
+            Accounts.insert_many(client.session, accounts)
+            total += len(accounts)
         LOG.info("💳💳💳💳💳💳💳💳💳💳💳💳💳💳💳💳")
-        LOG.info(f"Successfully synced {len(accounts)} accounts")
+        LOG.info(f"Successfully synced {total} accounts")
         LOG.info("💳💳💳💳💳💳💳💳💳💳💳💳💳💳💳💳")
 
     @classmethod
@@ -231,6 +230,8 @@ class Transactions(base):
     DATETIME_FORMAT = "%Y-%m-%dT%H:%M:%S+00:00"
     SETTLEMENT_BUFFER_DAYS = 5
     PAGE_SIZE = 50
+    WINDOW_SIZE_DAYS = 1
+    MAX_CONCURRENT_REQUESTS = 5
 
     id = Column(String, primary_key=True)
     account_id = Column(String, ForeignKey("accounts.id"))
@@ -254,7 +255,7 @@ class Transactions(base):
         return cls.max_transaction_date_for_account(session, account_id)
 
     @classmethod
-    async def sync_transactions(cls, client: UpClient, account_ids=None):
+    async def sync_transactions(cls, client: UpClient, account_ids=None, windowed: bool = False):
         accounts = account_ids or client.session.query(Accounts.id, Accounts.display_name).all()
 
         # determine each account's `since` param up front, sequentially, before any
@@ -266,49 +267,74 @@ class Transactions(base):
             for account in accounts
         }
 
-        # one connection, reused across every page of every account, instead of
-        # opening a new TCP+TLS connection per request
+        # windowed splits each account's range into day-sized chunks fetched concurrently;
+        # otherwise each account is a single (since, None) window, paginated via cursor as before
+        windows_for = cls._day_windows if windowed else (lambda since: [(since, None)])
+
+        # one connection, reused across every request, instead of opening a new
+        # TCP+TLS connection per request
+        # one semaphore shared across every account so at most MAX_CONCURRENT_REQUESTS
+        # windows are in flight at once, not MAX_CONCURRENT_REQUESTS per account
+        semaphore = asyncio.Semaphore(cls.MAX_CONCURRENT_REQUESTS)
         async with aiohttp.ClientSession() as http_session:
             cors = [
-                cls._fetch_transactions_for_account(
-                    client, http_session, account, since_by_account_id[account._mapping["id"]]
-                )
+                cls._fetch_transactions_for_window(client, http_session, semaphore, account, since, until)
                 for account in accounts
+                for since, until in windows_for(since_by_account_id[account._mapping["id"]])
             ]
             results = await asyncio.gather(*cors)
 
-        # writes happen sequentially, after all fetching is done, so only one coroutine
-        # ever touches the shared session at a time
-        all_transactions = [transaction for _, transactions in results for transaction in transactions]
-        Transactions.insert_many(client.session, all_transactions)
-        for account_id, transactions in results:
-            LOG.info(f"Successfully synced {len(transactions)} transactions for account {account_id}")
+        counts_by_account_id: dict[str, int] = {}
+        for account_id, count in results:
+            counts_by_account_id[account_id] = counts_by_account_id.get(account_id, 0) + count
+        for account_id, count in counts_by_account_id.items():
+            LOG.info(f"Successfully synced {count} transactions for account {account_id}")
 
     @classmethod
-    async def _fetch_transactions_for_account(
-        cls, client: UpClient, http_session: aiohttp.ClientSession, account: Accounts, since: str
-    ) -> tuple[str, list[Transactions]]:
-        LOG.info("🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝")
-        LOG.info(f"Fetching transactions for account: {account._mapping['display_name']}")
-        LOG.info("🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝")
+    def _day_windows(cls, since: str) -> list[tuple[str, str]]:
+        "carve [since, now] into WINDOW_SIZE_DAYS-wide (since, until) pairs to fetch concurrently"
+        window_start = datetime.datetime.strptime(since, cls.DATETIME_FORMAT)
+        now = datetime.datetime.now()
+        windows = []
+        while window_start < now:
+            window_end = min(window_start + datetime.timedelta(days=cls.WINDOW_SIZE_DAYS), now)
+            windows.append((window_start.strftime(cls.DATETIME_FORMAT), window_end.strftime(cls.DATETIME_FORMAT)))
+            window_start = window_end
+        return windows or [(since, now.strftime(cls.DATETIME_FORMAT))]
+
+    @classmethod
+    async def _fetch_transactions_for_window(
+        cls,
+        client: UpClient,
+        http_session: aiohttp.ClientSession,
+        semaphore: asyncio.Semaphore,
+        account: Accounts,
+        since: str,
+        until: str | None,
+    ) -> tuple[str, int]:
         account_id = account._mapping["id"]
         params = {"filter[since]": since, "page[size]": cls.PAGE_SIZE}
-        transactions = []
-        async for record in client.async_get_request(
-            http_session,
-            endpoint=f"accounts/{account_id}/transactions",
-            extras={"params": params}
-        ):
-            page = [Transactions.parse_transaction(lst, account_id) for lst in record.get("data", [])]
-            transactions.extend(page)
-            # so you can actually tell how far through history it's got without decoding the cursor
-            if page:
-                dates = [t.created_at for t in page]
-                LOG.info(
-                    f"{account._mapping['display_name']}: got {len(page)} transactions, "
-                    f"{min(dates)} to {max(dates)}"
-                )
-        return account_id, transactions
+        if until:
+            params["filter[until]"] = until
+        count = 0
+        async with semaphore:
+            async for record in client.async_get_request(
+                http_session,
+                endpoint=f"accounts/{account_id}/transactions",
+                extras={"params": params}
+            ):
+                # write each page as it arrives instead of buffering the whole window in memory,
+                # so a crash partway through only loses the page in flight, not the whole sync
+                page = [Transactions.parse_transaction(lst, account_id) for lst in record.get("data", [])]
+                if page:
+                    Transactions.insert_many(client.session, page)
+                    count += len(page)
+        if count:
+            LOG.info(
+                f"{account._mapping['display_name']}: got {count} transactions, "
+                f"{since} to {until or 'now'}"
+            )
+        return account_id, count
 
     @classmethod
     def insert(cls, session: Session, row: Transactions):
