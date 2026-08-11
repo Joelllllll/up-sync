@@ -11,7 +11,7 @@ from typing import Generator
 import aiohttp
 import requests
 from sqlalchemy import Boolean, Column, ForeignKey, Integer, Numeric, String, create_engine, func
-from sqlalchemy.orm import declarative_base, sessionmaker
+from sqlalchemy.orm import Session, declarative_base, sessionmaker
 
 logging.basicConfig(level=logging.INFO)
 LOG = logging.getLogger(__name__)
@@ -179,33 +179,33 @@ class Accounts(base):
         LOG.info("💳💳💳💳💳💳💳💳💳💳💳💳💳💳💳💳")
 
     @classmethod
-    def insert(cls, session: DBClient.session, row: Accounts):
+    def insert(cls, session: Session, row: Accounts):
         try:
             session.merge(row)
             session.commit()
         except Exception as e:
             session.rollback()
-            LOG.error(e)
+            LOG.exception(e)
             raise
 
     @classmethod
-    def insert_many(cls, session: DBClient.session, rows: list[Accounts]):
+    def insert_many(cls, session: Session, rows: list[Accounts]):
         try:
             for row in rows:
                 session.merge(row)
             session.commit()
         except Exception as e:
             session.rollback()
-            LOG.error(e)
+            LOG.exception(e)
             raise
 
 
     @classmethod
-    def from_id(cls, session: DBClient.session, id: str) -> Accounts:
+    def from_id(cls, session: Session, id: str) -> Accounts:
         return sanitize(session.query(Accounts).filter(Accounts.id == id).first())
 
     @classmethod
-    def all(cls, session: DBClient.session) -> list[Accounts]:
+    def all(cls, session: Session) -> list[Accounts]:
         return [sanitize(account.__dict__) for account in session.query(Accounts).all()]
 
     @classmethod
@@ -247,7 +247,7 @@ class Transactions(base):
     created_at = Column(String)
 
     @classmethod
-    def determine_account_filter_since_param(cls, client: UpClient, account_id: str, session: DBClient.session):
+    def determine_account_filter_since_param(cls, client: UpClient, account_id: str, session: Session):
         # lookback takes precedence, if not given then look at the last date of transaction
         if client.lookback:
             return (datetime.datetime.now() - datetime.timedelta(days=client.lookback)).strftime(cls.DATETIME_FORMAT)
@@ -311,37 +311,37 @@ class Transactions(base):
         return account_id, transactions
 
     @classmethod
-    def insert(cls, session, row: Transactions):
+    def insert(cls, session: Session, row: Transactions):
         try:
             session.merge(row)
             session.commit()
         except Exception as e:
             session.rollback()
-            LOG.error(e)
+            LOG.exception(e)
             raise
 
     @classmethod
-    def insert_many(cls, session, rows: list[Transactions]):
+    def insert_many(cls, session: Session, rows: list[Transactions]):
         try:
             for row in rows:
                 session.merge(row)
             session.commit()
         except Exception as e:
             session.rollback()
-            LOG.error(e)
+            LOG.exception(e)
             raise
 
     @classmethod
-    def all(cls, session: DBClient.session) -> list[Transactions]:
+    def all(cls, session: Session) -> list[Transactions]:
         return [sanitize(account.__dict__) for account in session.query(Transactions).all()]
 
     @classmethod
-    def min_transaction_date_for_account(cls, session: DBClient.session, account_id: str):
+    def min_transaction_date_for_account(cls, session: Session, account_id: str):
         return session.query(func.min(Transactions.created_at)).\
             filter(Transactions.account_id == account_id).scalar().strftime(cls.DATETIME_FORMAT)
 
     @classmethod
-    def max_transaction_date_for_account(cls, session: DBClient.session, account_id: str):
+    def max_transaction_date_for_account(cls, session: Session, account_id: str):
         res = session.query(func.max(Transactions.created_at)).\
             filter(Transactions.account_id == account_id).scalar()
         if res:

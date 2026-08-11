@@ -106,6 +106,23 @@ class TestSync:
         assert len(self.session.query(Transactions).all()) == 3
         assert len(commit_calls) == 1
 
+    def test_transaction_sync_with_no_accounts(self):
+        "sync_transactions should handle zero accounts in the db without crashing"
+        delete_all_from_tables()
+        up_sync.UpSync(os.environ["UP_TOKEN"]).sync_transactions()
+        assert self.session.query(Transactions).all() == []
+
+    def test_re_sync_is_idempotent(self):
+        "regression test: re-syncing the same data twice should not create duplicate rows"
+        up = up_sync.UpSync(os.environ["UP_TOKEN"])
+        up.sync_transactions()
+        first_count = len(self.session.query(Transactions).all())
+
+        up.sync_transactions()
+        second_count = len(self.session.query(Transactions).all())
+
+        assert first_count == second_count == 3
+
     def test_ping(self):
         for res in UpClient(os.environ["UP_TOKEN"])._get_request("/util/ping"):
             assert res == {

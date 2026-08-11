@@ -1,5 +1,16 @@
 # Up Sync
 
+Pulls accounts and transactions from the [Up Bank](https://up.com.au) API and writes them into Postgres, which [Metabase](https://www.metabase.com/) connects to for dashboards: net worth over time, spending by category, that kind of thing. It's a single-run sync script rather than a long-lived service: point it at a schedule (cron, CI, whatever) and it catches up incrementally each run rather than re-pulling everything.
+
+## Architecture
+
+- **`app/up_sync.py`** is the CLI entrypoint: authenticate, then sync accounts, then sync transactions.
+- **`app/clients.py`** holds the rest: `UpClient` (talks to the Up API), `DBClient` (Postgres session), and the `Accounts`/`Transactions` SQLAlchemy models, each of which owns its own parse/insert logic rather than there being a separate service layer.
+- **Pagination**: the Up API is cursor-based (`links.next` in the response body); both the sync and async clients loop until it's null.
+- **Incremental sync**: there's no separate watermark table. Each account's `filter[since]` param is either `--lookback` days ago (if passed), or the latest `created_at` already stored for that account, with a few days' buffer. Up transactions can sit as `HELD` and settle later without their `created_at` changing, so starting from the exact max would miss that settlement.
+- **Transactions sync is concurrent**: one coroutine per account via `asyncio.gather`, sharing a single `aiohttp` connection, with all the resulting rows written in one batched commit rather than per-page.
+- **Upserts, not inserts**: both models use `session.merge()` keyed on `id`, so re-running the sync over overlapping data is idempotent.
+
 ## Running
 
 Build the image first:
@@ -7,7 +18,7 @@ Build the image first:
 docker compose build
 ```
 
-### 1. Start everything (testing — app, postgres, metabase, mockserver)
+### 1. Start everything (testing: app, postgres, metabase, mockserver)
 ```shell
 docker compose --profile metabase --profile mockserver up -d
 ```

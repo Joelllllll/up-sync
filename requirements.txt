@@ -1,6 +1,6 @@
-requests
-ipython
-pytest
-sqlalchemy
-psycopg2_binary
-aiohttp
+requests==2.33.0
+ipython==9.4.0
+pytest==8.4.0
+sqlalchemy==2.0.42
+psycopg2-binary==2.9.10
+aiohttp==3.14.1

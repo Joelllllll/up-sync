@@ -1,4 +1,5 @@
-# Stage 1: Build stage
+# We need gcc to install psycopg2. Instead of keeping gcc in the final image,
+# we install it here, do the pip install, then copy the result over.
 FROM python:3.11-slim AS build
 
 WORKDIR /code
@@ -10,7 +11,7 @@ RUN pip install --prefix=/install --no-cache-dir -r /code/requirements.txt
 
 COPY ./app /code/app
 
-# Stage 2: Final runtime stage
+# The actual image we run: no gcc, just the installed packages + app code.
 FROM python:3.11-slim
 
 WORKDIR /code
@@ -19,4 +20,3 @@ COPY --from=build /install /usr/local
 
 COPY --from=build /code/app /code/app
 
-CMD ["python", "-m", "http.server", "8000"]

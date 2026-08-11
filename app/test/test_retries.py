@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 import sys
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -24,11 +25,14 @@ def client_response_error(status):
 
 
 class FakeResponse:
-    def __init__(self, json_data=None, exc=None):
+    def __init__(self, json_data=None, exc=None, json_exc=None):
         self._json_data = json_data
         self._exc = exc
+        self._json_exc = json_exc
 
     async def json(self):
+        if self._json_exc:
+            raise self._json_exc
         return self._json_data
 
     def raise_for_status(self):
@@ -135,6 +139,23 @@ class TestSyncRetries:
 
         assert mock_get.call_count == MAX_RETRIES
 
+    def test_raises_on_malformed_json_response(self):
+        "a non-JSON body should be treated like any other request failure: retried, then raised"
+        client = make_client()
+
+        def fake_get(url, headers=None, **extras):
+            mock_res = MagicMock()
+            mock_res.raise_for_status.return_value = None
+            mock_res.json.side_effect = requests.exceptions.JSONDecodeError("Expecting value", "", 0)
+            return mock_res
+
+        with patch("app.clients.requests.get", side_effect=fake_get) as mock_get, \
+             patch("app.clients.time.sleep"):
+            with pytest.raises(requests.exceptions.JSONDecodeError):
+                client._fetch_with_retries("http://fake", {})
+
+        assert mock_get.call_count == MAX_RETRIES
+
 
 class TestAsyncRetries:
     def test_retries_on_transient_failure_then_succeeds(self):
@@ -178,6 +199,17 @@ class TestAsyncRetries:
         with patch("app.clients.asyncio.sleep", new_callable=AsyncMock):
             with pytest.raises(aiohttp.ClientResponseError):
                 asyncio.run(client._async_fetch_with_retries(session, "http://fake", {}))
+
+    def test_raises_on_malformed_json_response(self):
+        "a body that fails to parse as JSON isn't an aiohttp.ClientError, so it isn't retried at all"
+        client = make_client()
+        responses = [FakeResponse(json_exc=json.JSONDecodeError("Expecting value", "", 0))]
+        session = FakeClientSession(responses)
+
+        with pytest.raises(json.JSONDecodeError):
+            asyncio.run(client._async_fetch_with_retries(session, "http://fake", {}))
+
+        assert len(session.get_calls) == 1
 
 
 class TestAsyncGetRequestReusesSession:
