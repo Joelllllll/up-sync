@@ -230,7 +230,7 @@ class Transactions(base):
     DATETIME_FORMAT = "%Y-%m-%dT%H:%M:%S+00:00"
     SETTLEMENT_BUFFER_DAYS = 5
     PAGE_SIZE = 50
-    WINDOW_SIZE_DAYS = 1
+    WINDOW_SIZE_DAYS = 7
     MAX_CONCURRENT_REQUESTS = 5
 
     id = Column(String, primary_key=True)
@@ -255,7 +255,9 @@ class Transactions(base):
         return cls.max_transaction_date_for_account(session, account_id)
 
     @classmethod
-    async def sync_transactions(cls, client: UpClient, account_ids=None, windowed: bool = False):
+    async def sync_transactions(
+        cls, client: UpClient, account_ids=None, windowed: bool = False, window_days: int = None
+    ):
         accounts = account_ids or client.session.query(Accounts.id, Accounts.display_name).all()
 
         # determine each account's `since` param up front, sequentially, before any
@@ -269,7 +271,9 @@ class Transactions(base):
 
         # windowed splits each account's range into day-sized chunks fetched concurrently;
         # otherwise each account is a single (since, None) window, paginated via cursor as before
-        windows_for = cls._day_windows if windowed else (lambda since: [(since, None)])
+        windows_for = (
+            (lambda since: cls._day_windows(since, window_days)) if windowed else (lambda since: [(since, None)])
+        )
 
         # one connection, reused across every request, instead of opening a new
         # TCP+TLS connection per request
@@ -291,13 +295,14 @@ class Transactions(base):
             LOG.info(f"Successfully synced {count} transactions for account {account_id}")
 
     @classmethod
-    def _day_windows(cls, since: str) -> list[tuple[str, str]]:
-        "carve [since, now] into WINDOW_SIZE_DAYS-wide (since, until) pairs to fetch concurrently"
+    def _day_windows(cls, since: str, window_days: int = None) -> list[tuple[str, str]]:
+        "carve [since, now] into window_days-wide (since, until) pairs to fetch concurrently"
+        window_days = window_days or cls.WINDOW_SIZE_DAYS
         window_start = datetime.datetime.strptime(since, cls.DATETIME_FORMAT)
         now = datetime.datetime.now()
         windows = []
         while window_start < now:
-            window_end = min(window_start + datetime.timedelta(days=cls.WINDOW_SIZE_DAYS), now)
+            window_end = min(window_start + datetime.timedelta(days=window_days), now)
             windows.append((window_start.strftime(cls.DATETIME_FORMAT), window_end.strftime(cls.DATETIME_FORMAT)))
             window_start = window_end
         return windows or [(since, now.strftime(cls.DATETIME_FORMAT))]

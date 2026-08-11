@@ -25,16 +25,16 @@ class UpSync:
             LOG.info(f"Failed to authenticate with Up: {e}")
             sys.exit(1)
 
-    def sync_transactions(self, account_ids=None, windowed: bool = False):
-        asyncio.run(Transactions.sync_transactions(self.client, account_ids, windowed))
+    def sync_transactions(self, account_ids=None, windowed: bool = False, window_days: int = None):
+        asyncio.run(Transactions.sync_transactions(self.client, account_ids, windowed, window_days))
 
     def sync_accounts(self):
         Accounts.sync_accounts(self.client)
 
-    def sync(self, windowed: bool = False):
+    def sync(self, windowed: bool = False, window_days: int = None):
         LOG.info("Starting Sync")
         self.sync_accounts()
-        self.sync_transactions(windowed=windowed)
+        self.sync_transactions(windowed=windowed, window_days=window_days)
         LOG.info("Sync Complete")
 
 def parse_args():
@@ -53,10 +53,17 @@ def parse_args():
         help="Split each account's transaction fetch into day-sized windows and fetch them "
              "concurrently (bounded by a semaphore), instead of one cursor-paginated request per account"
     )
+    parser.add_argument(
+        "--window-days",
+        type=int,
+        required=False,
+        default=None,
+        help=f"Window size in days for --async transaction fetching (default {Transactions.WINDOW_SIZE_DAYS})"
+    )
     return parser.parse_args()
 
 if __name__ == "__main__":
     args = parse_args()
     up_sync = UpSync(os.environ["UP_TOKEN"], args.lookback)
-    up_sync.sync(windowed=args.windowed)
+    up_sync.sync(windowed=args.windowed, window_days=args.window_days)
 

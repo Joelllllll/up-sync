@@ -8,7 +8,7 @@ Pulls accounts and transactions from the [Up Bank](https://up.com.au) API and wr
 - **`app/clients.py`** holds the rest: `UpClient` (talks to the Up API), `DBClient` (Postgres session), and the `Accounts`/`Transactions` SQLAlchemy models, each of which owns its own parse/insert logic rather than there being a separate service layer.
 - **Pagination**: the Up API is cursor-based (`links.next` in the response body); both the sync and async clients loop until it's null.
 - **Incremental sync**: there's no separate watermark table. Each account's `filter[since]` param is either `--lookback` days ago (if passed), or the latest `created_at` already stored for that account, with a few days' buffer. Up transactions can sit as `HELD` and settle later without their `created_at` changing, so starting from the exact max would miss that settlement.
-- **Transactions sync is concurrent**: one coroutine per account via `asyncio.gather`, sharing a single `aiohttp` connection, with all the resulting rows written in one batched commit rather than per-page.
+- **Transactions sync is concurrent**: one coroutine per account via `asyncio.gather`, sharing a single `aiohttp` connection. With `--async`, each account's range is further split into windows (`--window-days`, default 7) fetched concurrently (bounded by a semaphore) instead of one cursor-paginated request per account. Rows are batch-inserted and committed as each page arrives, not buffered until the end.
 - **Upserts, not inserts**: both models use `session.merge()` keyed on `id`, so re-running the sync over overlapping data is idempotent.
 
 ## Running
@@ -38,6 +38,8 @@ export UP_TOKEN="xxxxxxxx"
 ./app/up_sync.py --lookback 100
 ```
 The `lookback` config is in days and is optional (default 30). This syncs accounts + transactions into the `accounts`/`transactions` tables.
+
+Add `--async` to split each account's transaction fetch into windows fetched concurrently instead of one cursor-paginated request per account. Window size defaults to 7 days, override with `--window-days`. Leave it at the default for typical low-volume accounts; drop it lower (e.g. 1) for an account with a lot of transactions to pull, so more windows are in flight at once instead of one big window paginating through sequentially.
 
 
 ## Todo
