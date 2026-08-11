@@ -4,6 +4,7 @@ import asyncio
 import datetime
 import logging
 import os
+import time
 from dataclasses import dataclass
 from typing import Generator
 
@@ -18,6 +19,9 @@ LOG = logging.getLogger(__name__)
 TEST_DATABASE = "test"
 
 VERSION = "v1"
+
+MAX_RETRIES = 3
+RETRY_BACKOFF_SECONDS = 1
 
 def sanitize(record: dict):
     try:
@@ -62,56 +66,83 @@ class UpClient():
         return os.environ.get("MOCKSERVER_URL")
 
     def join_endpoint(self, endpoint: str) -> str:
-        return f"{self.base_url()}/{endpoint}"
+        return f"{self.base_url()}/{endpoint.lstrip('/')}"
 
-    async def async_get_request(self, endpoint: str = None, url: str = None, extras: dict = {}) -> Generator:
+    async def async_get_request(
+        self, session: aiohttp.ClientSession, endpoint: str = None, url: str = None, extras: dict = None
+    ) -> Generator:
         url = url or self.join_endpoint(endpoint)
+        extras = extras or {}
         page = 1
         while True:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, headers=self.headers, **extras) as res:
-                    res_json = await res.json()
-                    try:
-                        res.raise_for_status()
-                    except Exception as e:
-                        LOG.error(e)
-                        raise e
-                    LOG.info(f"Successfully fetched {url}, page {page}, extras {extras}")
-                    yield res_json
-
-                    if (next_page := res_json.get("links", {}).get("next")):
-                        url = next_page
-                        page += 1
-                        LOG.info("Fetching next page", page)
-                        continue
-                    LOG.info("Finished pagination")
-                    break
-    
-
-    def _get_request(self, endpoint: str = None, url: str = None, extras: dict = {}) -> Generator:
-        url = url or self.join_endpoint(endpoint)
-        page = 1
-        while True:
-            res = requests.get(url, headers=self.headers, **extras)
-            res_json = res.json()
-            try:
-                res.raise_for_status()
-            except requests.exceptions.HTTPError as e:
-                if e.response.status_code == 401:
-                    raise self.UpAuthError("Failed to authenticate")
-            except Exception as e:
-                LOG.error(e)
-                raise e
-            LOG.info(f"Successfully fetched {url}, \"page:\": page, \"extras\": extras")
+            res_json = await self._async_fetch_with_retries(session, url, extras)
+            # url has the pagination cursor tacked on which is long and not worth printing
+            LOG.info(f"Successfully fetched {url.split('?')[0]}, page {page}")
             yield res_json
 
             if (next_page := res_json.get("links", {}).get("next")):
                 url = next_page
                 page += 1
-                LOG.info("Fetching next page", page)
+                LOG.info(f"Fetching next page {page}")
                 continue
             LOG.info("Finished pagination")
             break
+
+    async def _async_fetch_with_retries(self, session: aiohttp.ClientSession, url: str, extras: dict) -> dict:
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                async with session.get(url, headers=self.headers, **extras) as res:
+                    res_json = await res.json()
+                    res.raise_for_status()
+                    return res_json
+            except aiohttp.ClientResponseError as e:
+                if e.status == 401:
+                    raise self.UpAuthError("Failed to authenticate")
+                # 429 is Up's rate limit response, worth backing off and retrying same as a 5xx
+                if (e.status < 500 and e.status != 429) or attempt == MAX_RETRIES:
+                    raise
+            except aiohttp.ClientError as e:
+                if attempt == MAX_RETRIES:
+                    raise
+            LOG.warning(f"Request to {url} failed (attempt {attempt}/{MAX_RETRIES}), retrying")
+            await asyncio.sleep(RETRY_BACKOFF_SECONDS * attempt)
+
+    def _get_request(self, endpoint: str = None, url: str = None, extras: dict = None) -> Generator:
+        url = url or self.join_endpoint(endpoint)
+        extras = extras or {}
+        page = 1
+        while True:
+            res_json = self._fetch_with_retries(url, extras)
+            # url has the pagination cursor tacked on which is long and not worth printing
+            LOG.info(f"Successfully fetched {url.split('?')[0]}, page {page}")
+            yield res_json
+
+            if (next_page := res_json.get("links", {}).get("next")):
+                url = next_page
+                page += 1
+                LOG.info(f"Fetching next page {page}")
+                continue
+            LOG.info("Finished pagination")
+            break
+
+    def _fetch_with_retries(self, url: str, extras: dict) -> dict:
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                res = requests.get(url, headers=self.headers, **extras)
+                res.raise_for_status()
+                return res.json()
+            except requests.exceptions.HTTPError as e:
+                status = e.response.status_code
+                if status == 401:
+                    raise self.UpAuthError("Failed to authenticate")
+                # 429 is Up's rate limit response, worth backing off and retrying same as a 5xx
+                if (status < 500 and status != 429) or attempt == MAX_RETRIES:
+                    raise
+            except requests.exceptions.RequestException as e:
+                if attempt == MAX_RETRIES:
+                    raise
+            LOG.warning(f"Request to {url} failed (attempt {attempt}/{MAX_RETRIES}), retrying")
+            time.sleep(RETRY_BACKOFF_SECONDS * attempt)
 
 base = declarative_base()
 
@@ -136,15 +167,15 @@ class Accounts(base):
         LOG.info("\n💳💳💳💳💳💳💳💳💳💳💳💳💳💳💳💳")
         LOG.info("Syncing Accounts")
         LOG.info("💳💳💳💳💳💳💳💳💳💳💳💳💳💳💳💳")
-        count = 0
         #TODO move this to a method on  accounts class
-        for res in client._get_request(endpoint="/accounts"):
-            for lst in res.get("data", []):
-                account = Accounts.parse_account(lst)
-                Accounts.insert(client.session, account)
-                count += 1
+        accounts = [
+            Accounts.parse_account(lst)
+            for res in client._get_request(endpoint="/accounts")
+            for lst in res.get("data", [])
+        ]
+        Accounts.insert_many(client.session, accounts)
         LOG.info("💳💳💳💳💳💳💳💳💳💳💳💳💳💳💳💳")
-        LOG.info(f"Successfully synced {count} accounts")
+        LOG.info(f"Successfully synced {len(accounts)} accounts")
         LOG.info("💳💳💳💳💳💳💳💳💳💳💳💳💳💳💳💳")
 
     @classmethod
@@ -155,6 +186,18 @@ class Accounts(base):
         except Exception as e:
             session.rollback()
             LOG.error(e)
+            raise
+
+    @classmethod
+    def insert_many(cls, session: DBClient.session, rows: list[Accounts]):
+        try:
+            for row in rows:
+                session.merge(row)
+            session.commit()
+        except Exception as e:
+            session.rollback()
+            LOG.error(e)
+            raise
 
 
     @classmethod
@@ -186,6 +229,8 @@ class Transactions(base):
     __tablename__ = "transactions"
     DEFAULT_LOOKBACK = 30
     DATETIME_FORMAT = "%Y-%m-%dT%H:%M:%S+00:00"
+    SETTLEMENT_BUFFER_DAYS = 5
+    PAGE_SIZE = 50
 
     id = Column(String, primary_key=True)
     account_id = Column(String, ForeignKey("accounts.id"))
@@ -211,28 +256,59 @@ class Transactions(base):
     @classmethod
     async def sync_transactions(cls, client: UpClient, account_ids=None):
         accounts = account_ids or client.session.query(Accounts.id, Accounts.display_name).all()
-        cors = []
-        for account in accounts:
-            cors.append(cls._sync_transactions_for_account(client, account))
-        await asyncio.gather(*cors)
+
+        # determine each account's `since` param up front, sequentially, before any
+        # concurrent work starts touching the shared session
+        since_by_account_id = {
+            account._mapping["id"]: cls.determine_account_filter_since_param(
+                client, account._mapping["id"], client.session
+            )
+            for account in accounts
+        }
+
+        # one connection, reused across every page of every account, instead of
+        # opening a new TCP+TLS connection per request
+        async with aiohttp.ClientSession() as http_session:
+            cors = [
+                cls._fetch_transactions_for_account(
+                    client, http_session, account, since_by_account_id[account._mapping["id"]]
+                )
+                for account in accounts
+            ]
+            results = await asyncio.gather(*cors)
+
+        # writes happen sequentially, after all fetching is done, so only one coroutine
+        # ever touches the shared session at a time
+        all_transactions = [transaction for _, transactions in results for transaction in transactions]
+        Transactions.insert_many(client.session, all_transactions)
+        for account_id, transactions in results:
+            LOG.info(f"Successfully synced {len(transactions)} transactions for account {account_id}")
 
     @classmethod
-    async def _sync_transactions_for_account(cls, client: UpClient, account: Accounts):
+    async def _fetch_transactions_for_account(
+        cls, client: UpClient, http_session: aiohttp.ClientSession, account: Accounts, since: str
+    ) -> tuple[str, list[Transactions]]:
         LOG.info("🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝")
-        LOG.info(f"Syncing transactions for account: {account._mapping['display_name']}")
+        LOG.info(f"Fetching transactions for account: {account._mapping['display_name']}")
         LOG.info("🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝🤝")
-        count = 0
         account_id = account._mapping["id"]
-        params = {"filter[since]": cls.determine_account_filter_since_param(client, account_id, client.session)}
+        params = {"filter[since]": since, "page[size]": cls.PAGE_SIZE}
+        transactions = []
         async for record in client.async_get_request(
+            http_session,
             endpoint=f"accounts/{account_id}/transactions",
             extras={"params": params}
         ):
-            for lst in record.get("data", []):
-                transaction = Transactions.parse_transaction(lst, account_id)
-                Transactions.insert(client.session, transaction)
-                count += 1
-        LOG.info(f"Successfully synced {count} transactions for account {account_id}")
+            page = [Transactions.parse_transaction(lst, account_id) for lst in record.get("data", [])]
+            transactions.extend(page)
+            # so you can actually tell how far through history it's got without decoding the cursor
+            if page:
+                dates = [t.created_at for t in page]
+                LOG.info(
+                    f"{account._mapping['display_name']}: got {len(page)} transactions, "
+                    f"{min(dates)} to {max(dates)}"
+                )
+        return account_id, transactions
 
     @classmethod
     def insert(cls, session, row: Transactions):
@@ -242,6 +318,18 @@ class Transactions(base):
         except Exception as e:
             session.rollback()
             LOG.error(e)
+            raise
+
+    @classmethod
+    def insert_many(cls, session, rows: list[Transactions]):
+        try:
+            for row in rows:
+                session.merge(row)
+            session.commit()
+        except Exception as e:
+            session.rollback()
+            LOG.error(e)
+            raise
 
     @classmethod
     def all(cls, session: DBClient.session) -> list[Transactions]:
@@ -257,7 +345,10 @@ class Transactions(base):
         res = session.query(func.max(Transactions.created_at)).\
             filter(Transactions.account_id == account_id).scalar()
         if res:
-            return res.strftime(cls.DATETIME_FORMAT)
+            # go back a few extra days rather than the exact max - transactions can sit as
+            # HELD and settle later without their created_at changing, so if we started from
+            # the exact max we'd never see that settlement
+            return (res - datetime.timedelta(days=cls.SETTLEMENT_BUFFER_DAYS)).strftime(cls.DATETIME_FORMAT)
         return (datetime.datetime.now() - datetime.timedelta(days=cls.DEFAULT_LOOKBACK)).strftime(cls.DATETIME_FORMAT)
 
     @classmethod

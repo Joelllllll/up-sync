@@ -1,11 +1,14 @@
 import os
 import secrets
 import sys
+from unittest.mock import patch
 
 # makes it access the test db instead
 os.environ["env"] = "dev"
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "../../"))
+import aiohttp
+
 from app import up_sync
 from app.clients import Accounts, DBClient, Transactions, UpClient
 from app.test.test_db import delete_all_from_tables
@@ -70,6 +73,38 @@ class TestSync:
         assert account.id == "1234"
         transaction = self.session.query(Transactions).all()
         assert len(transaction) == 3
+
+    def test_transaction_sync_reuses_a_single_http_session(self):
+        "regression test: requests must share one connection instead of opening a new one per page/account"
+        real_client_session = aiohttp.ClientSession
+        created = []
+
+        def spy(*args, **kwargs):
+            session = real_client_session(*args, **kwargs)
+            created.append(session)
+            return session
+
+        with patch("app.clients.aiohttp.ClientSession", side_effect=spy):
+            up_sync.UpSync(os.environ["UP_TOKEN"]).sync_transactions()
+
+        # 2 accounts, one of which paginates, should still only open a single session
+        assert len(created) == 1
+
+    def test_transaction_sync_batches_inserts_into_a_single_commit(self):
+        "regression test: transactions should be committed in one batch, not one commit per row"
+        up = up_sync.UpSync(os.environ["UP_TOKEN"])
+        commit_calls = []
+        original_commit = up.client.session.commit
+
+        def spy_commit():
+            commit_calls.append(1)
+            return original_commit()
+
+        up.client.session.commit = spy_commit
+        up.sync_transactions()
+
+        assert len(self.session.query(Transactions).all()) == 3
+        assert len(commit_calls) == 1
 
     def test_ping(self):
         for res in UpClient(os.environ["UP_TOKEN"])._get_request("/util/ping"):

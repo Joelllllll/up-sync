@@ -17,7 +17,8 @@ services:
       networks:
         - metanet1
       depends_on:
-        - postgres
+        postgres:
+          condition: service_healthy
 
   postgres:
       image: postgres:14.1-alpine
@@ -25,11 +26,17 @@ services:
       restart: always
       ports:
         - '5432:5432'
-      volumes: 
+      volumes:
+        - postgres_data:/var/lib/postgresql/data
         - ./sql/create_tables.sql:/docker-entrypoint-initdb.d/create_tables.sql
         - ./sql/data/:/docker-entrypoint-initdb.d/data/
       env_file:
         - 'app/variables.env'
+      healthcheck:
+        test: ["CMD-SHELL", "pg_isready -U postgres"]
+        interval: 5s
+        timeout: 5s
+        retries: 10
       networks:
         - metanet1
   mockserver:
@@ -53,8 +60,14 @@ services:
         - 3000:3000
       networks:
         - metanet1
+      depends_on:
+        postgres:
+          condition: service_healthy
       profiles:
         - metabase
 networks:
   metanet1:
     driver: bridge
+
+volumes:
+  postgres_data:

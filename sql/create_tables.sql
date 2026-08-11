@@ -36,3 +36,9 @@ CREATE TABLE transactions (
 CREATE DATABASE test
 WITH TEMPLATE postgres
 OWNER postgres;
+
+-- separate database for Metabase's own app metadata, so its internal
+-- tables don't show up alongside accounts/transactions when browsing
+-- the postgres database as a data source in Metabase
+CREATE DATABASE metabase
+OWNER postgres;

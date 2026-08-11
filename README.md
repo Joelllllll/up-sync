@@ -1,38 +1,32 @@
 # Up Sync
 
 ## Running
-Build the docker image
-```shell
-docker-compose build
-```
-Bring up the docker containers,
-This will start the `app` and `postgres` containers.
 
+Build the image first:
 ```shell
-docker-compose run app bash
+docker compose build
 ```
 
-If you wish to bring up the `metabase` (for UI) or the `mockserver` (for testing) containers, you'll need to use `--profile` with compose up
-
-to run the tests
+### 1. Start everything (testing — app, postgres, metabase, mockserver)
 ```shell
-docker-compose up --profile mockserver
+docker compose --profile metabase --profile mockserver up -d
 ```
+Then run the tests:
+```shell
+docker compose exec app pytest
+```
+Metabase UI: `http://localhost:3000`
 
-You'll need to export your UP token as a ENV variable
-
+### 2. Start just enough to pull in data (app + postgres)
+```shell
+docker compose run app bash
+```
+Inside the container:
 ```shell
 export UP_TOKEN="xxxxxxxx"
+./app/up_sync.py --lookback 100
 ```
-
-```shell
-./up_sync.py --lookback 100
-```
-
-This will sync all accounts and their transactions into an `accounts` and `transactions` table in the database \
-The `lookback` config is in days and is optional. The default lookback period is 30 days
-
-You can access the metabase dashboard at `http://localhost:3000` to view the data
+The `lookback` config is in days and is optional (default 30). This syncs accounts + transactions into the `accounts`/`transactions` tables.
 
 
 ## Todo

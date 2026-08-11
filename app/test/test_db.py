@@ -1,6 +1,6 @@
+import datetime
 import os
 import sys
-import datetime
 from unittest.mock import patch
 
 # makes it access the test db instead
@@ -22,16 +22,11 @@ class TestDB:
         delete_all_from_tables()
 
     def test_dev_db_string(self):
-        assert (
-            DBClient.db_string() == "postgresql://postgres:postgres@postgres:5432/test"
-        )
+        assert DBClient.db_string() == "postgresql://postgres:postgres@postgres:5432/test"
 
     def test_prod_db_string(self):
         os.environ["env"] = "prod"
-        assert (
-            DBClient.db_string()
-            == "postgresql://postgres:postgres@postgres:5432/postgres"
-        )
+        assert DBClient.db_string() == "postgresql://postgres:postgres@postgres:5432/postgres"
         os.environ["env"] = "dev"
 
     def test_insert_account(self):
@@ -96,9 +91,7 @@ class TestDB:
 class TestTransactions:
     def test_max_transaction_date_for_account_no_transactions(self):
         "this should default to 30 days ago"
-        fixed_now = datetime.datetime(
-            2024, 1, 1, tzinfo=datetime.timezone.utc
-        )  # match your freeze_time date
+        fixed_now = datetime.datetime(2024, 1, 1, tzinfo=datetime.timezone.utc)  # match your freeze_time date
 
         class FixedDateTime(datetime.datetime):
             @classmethod
@@ -106,59 +99,37 @@ class TestTransactions:
                 return fixed_now if tz is None else fixed_now.astimezone(tz)
 
         with patch("datetime.datetime", FixedDateTime):
-            assert (
-                Transactions.max_transaction_date_for_account(self.session, "123")
-                == "2023-12-02T00:00:00+00:00"
-            )
-            assert (
-                Transactions.max_transaction_date_for_account(self.session, "321")
-                == "2023-12-02T00:00:00+00:00"
-            )
+            assert Transactions.max_transaction_date_for_account(self.session, "123") == "2023-12-02T00:00:00+00:00"
+            assert Transactions.max_transaction_date_for_account(self.session, "321") == "2023-12-02T00:00:00+00:00"
 
     session = DBClient().session
 
     def test_min_transaction_date_for_account(self):
         setup_test_db()
-        assert (
-            Transactions.min_transaction_date_for_account(self.session, "123")
-            == "2020-01-01T00:00:00+00:00"
-        )
-        assert (
-            Transactions.min_transaction_date_for_account(self.session, "321")
-            == "2020-01-01T00:00:00+00:00"
-        )
+        assert Transactions.min_transaction_date_for_account(self.session, "123") == "2020-01-01T00:00:00+00:00"
+        assert Transactions.min_transaction_date_for_account(self.session, "321") == "2020-01-01T00:00:00+00:00"
 
     def test_max_transaction_date_for_account(self):
         setup_test_db()
-        assert (
-            Transactions.max_transaction_date_for_account(self.session, "123")
-            == "2024-01-01T00:00:00+00:00"
-        )
-        assert (
-            Transactions.max_transaction_date_for_account(self.session, "321")
-            == "2022-01-01T00:00:00+00:00"
-        )
+        assert Transactions.max_transaction_date_for_account(self.session, "123") == "2023-12-27T00:00:00+00:00"
+        assert Transactions.max_transaction_date_for_account(self.session, "321") == "2021-12-27T00:00:00+00:00"
 
     def test_determine_account_filter_since_param(self):
         "Use days ago if present"
         setup_test_db()
         lookback = 7
         client = UpClient(os.environ["UP_TOKEN"], lookback=lookback)
-        date_result = Transactions.determine_account_filter_since_param(
-            client, "123", self.session
+        date_result = Transactions.determine_account_filter_since_param(client, "123", self.session)
+        assert date_result.split("T")[0] == (datetime.datetime.today() - datetime.timedelta(days=lookback)).strftime(
+            "%Y-%m-%d"
         )
-        assert date_result.split("T")[0] == (
-            datetime.datetime.today() - datetime.timedelta(days=lookback)
-        ).strftime("%Y-%m-%d")
 
     def test_determine_account_filter_since_param_no_lookback(self):
         "Use days ago if present, else check the earliest date for the account"
         setup_test_db()
         client = UpClient(os.environ["UP_TOKEN"])
-        date_result = Transactions.determine_account_filter_since_param(
-            client, "123", self.session
-        )
-        assert date_result == "2024-01-01T00:00:00+00:00"
+        date_result = Transactions.determine_account_filter_since_param(client, "123", self.session)
+        assert date_result == "2023-12-27T00:00:00+00:00"
 
 
 class TestUpClient:
