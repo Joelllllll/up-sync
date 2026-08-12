@@ -1,7 +1,6 @@
 import asyncio
 import datetime
 import os
-import secrets
 import sys
 from unittest.mock import patch
 
@@ -18,38 +17,6 @@ from app.test.helpers import delete_all_from_tables
 
 ACTION_DATE = "2024-06-06T07:20:59+00:00"
 
-## I don't use these anymore but I'll leave them here for now
-BASE_TRANSACTION_ATTRIBUTES = {
-    "status": "SETTLED",
-    "rawText": None,
-    "description": "David Taylor",
-    "message": "Money for the pizzas last night.",
-    "isCategorizable": True,
-    "holdInfo": None,
-    "roundUp": None,
-    "cashback": None,
-    "amount": {"currencyCode": "AUD", "value": "-59.98", "valueInBaseUnits": -5998},
-    "foreignAmount": None,
-    "cardPurchaseMethod": {"cardNumberSuffix": "1234"},
-    "settledAt": ACTION_DATE,
-    "createdAt": ACTION_DATE,
-}
-
-
-def generate_single_transaction(kwargs: dict = {}) -> dict:
-    return {
-        "type": "transactions",
-        "id": secrets.token_hex(4),
-        "attributes": {**{**BASE_TRANSACTION_ATTRIBUTES, **kwargs}},
-    }
-
-
-def generate_transaction_response(transactions: list, account_id: str, paginate: bool = False) -> dict:
-    links = {"prev": None, "next": None}
-    if paginate:
-        links["next"] = f"{up_sync.URL}/accounts/{account_id}/transactions?page=2"
-    return {"data": transactions, "links": links}
-
 
 class TestSync:
     def setup_method(self):
@@ -65,7 +32,7 @@ class TestSync:
         up = up_sync.UpSync(os.environ["UP_TOKEN"])
         await Accounts.sync_accounts(up.client)
         account = await Accounts.from_id(self.session, "123")
-        assert account.id == "123"
+        assert account["id"] == "123"
         await self.session.close()
         await up.client.session.close()
 
@@ -75,9 +42,9 @@ class TestSync:
 
         # assert that the values made it into the database
         account = await Accounts.from_id(self.session, "123")
-        assert account.id == "123"
+        assert account["id"] == "123"
         account = await Accounts.from_id(self.session, "1234")
-        assert account.id == "1234"
+        assert account["id"] == "1234"
         transaction = (await self.session.execute(select(Transactions))).scalars().all()
         assert len(transaction) == 3
         await self.session.close()
@@ -139,8 +106,8 @@ class TestParseArgs:
     def test_start_and_end_date_parsed(self):
         with patch("sys.argv", ["up_sync.py", "--start-date", "2025-12-01", "--end-date", "2026-01-01"]):
             args = up_sync.parse_args()
-        assert args.start_date == datetime.datetime(2025, 12, 1)
-        assert args.end_date == datetime.datetime(2026, 1, 1)
+        assert args.start_date == datetime.datetime(2025, 12, 1, tzinfo=datetime.timezone.utc)
+        assert args.end_date == datetime.datetime(2026, 1, 1, tzinfo=datetime.timezone.utc)
         assert args.lookback is None
 
     def test_lookback_alone_still_works(self):

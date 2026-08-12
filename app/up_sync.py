@@ -52,7 +52,7 @@ class UpSync:
 
 def valid_date(value: str) -> datetime.datetime:
     try:
-        return datetime.datetime.strptime(value, "%Y-%m-%d")
+        return datetime.datetime.strptime(value, "%Y-%m-%d").replace(tzinfo=datetime.timezone.utc)
     except ValueError:
         raise argparse.ArgumentTypeError(f"Invalid date '{value}', expected YYYY-MM-DD")
 

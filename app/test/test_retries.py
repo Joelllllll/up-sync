@@ -279,15 +279,16 @@ class TestAsyncRetries:
         assert mock_sleep.call_args_list == [call(s) for s in RATE_LIMIT_BACKOFF_SECONDS]
 
     def test_raises_on_malformed_json_response(self):
-        "a body that fails to parse as JSON isn't an aiohttp.ClientError, so it isn't retried at all"
+        "a non-JSON body should be treated like any other request failure: retried, then raised"
         client = make_client()
-        responses = [FakeResponse(json_exc=json.JSONDecodeError("Expecting value", "", 0))]
+        responses = [FakeResponse(json_exc=json.JSONDecodeError("Expecting value", "", 0)) for _ in range(MAX_RETRIES)]
         session = FakeClientSession(responses)
 
-        with pytest.raises(json.JSONDecodeError):
-            asyncio.run(client._async_fetch_with_retries(session, "http://fake", {}))
+        with patch("app.clients.asyncio.sleep", new_callable=AsyncMock):
+            with pytest.raises(json.JSONDecodeError):
+                asyncio.run(client._async_fetch_with_retries(session, "http://fake", {}))
 
-        assert len(session.get_calls) == 1
+        assert len(session.get_calls) == MAX_RETRIES
 
 
 class TestAsyncGetRequestReusesSession:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime
+import json
 import logging
 import os
 import time
@@ -33,7 +34,7 @@ def parse_iso(value: str | None) -> datetime.datetime | None:
 def sanitize(record: dict):
     try:
         record.pop("_sa_instance_state")
-    except AttributeError:
+    except KeyError:
         pass
     return record
 
@@ -107,8 +108,8 @@ class UpClient:
         while True:
             try:
                 async with session.get(url, headers=self.headers, **extras) as res:
-                    res_json = await res.json()
                     res.raise_for_status()
+                    res_json = await res.json()
                     return res_json
             except aiohttp.ClientResponseError as e:
                 if e.status == 401:
@@ -126,7 +127,7 @@ class UpClient:
                     continue
                 if e.status < 500 or attempt == MAX_RETRIES - 1:
                     raise
-            except aiohttp.ClientError:
+            except (aiohttp.ClientError, json.JSONDecodeError):
                 if attempt == MAX_RETRIES - 1:
                     raise
             attempt += 1
@@ -239,9 +240,10 @@ class Accounts(base):
             raise
 
     @classmethod
-    async def from_id(cls, session: AsyncSession, id: str) -> Accounts:
+    async def from_id(cls, session: AsyncSession, id: str) -> dict:
         result = await session.execute(select(Accounts).where(Accounts.id == id))
-        return sanitize(result.scalar_one_or_none())
+        account = result.scalar_one_or_none()
+        return sanitize(account.__dict__) if account else None
 
     @classmethod
     async def all(cls, session: AsyncSession) -> list[Accounts]:
@@ -268,7 +270,6 @@ class Accounts(base):
 class Transactions(base):
     __tablename__ = "transactions"
     DEFAULT_LOOKBACK = 30
-    DATETIME_FORMAT = "%Y-%m-%dT%H:%M:%S+00:00"
     SETTLEMENT_BUFFER_DAYS = 5
     PAGE_SIZE = 50
     WINDOW_SIZE_DAYS = 7
@@ -292,24 +293,22 @@ class Transactions(base):
     async def determine_account_filter_since_param(cls, client: UpClient, account_id: str, session: AsyncSession):
         # start_date/lookback take precedence, if neither given then look at the last date of transaction
         if client.start_date:
-            return client.start_date.strftime(cls.DATETIME_FORMAT)
+            return client.start_date.isoformat()
         if client.lookback:
-            return (datetime.datetime.now() - datetime.timedelta(days=client.lookback)).strftime(cls.DATETIME_FORMAT)
+            return (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=client.lookback)).isoformat()
         return await cls.max_transaction_date_for_account(session, account_id)
 
     @classmethod
     def determine_account_filter_until_param(cls, client: UpClient):
         if client.end_date:
-            return client.end_date.strftime(cls.DATETIME_FORMAT)
+            return client.end_date.isoformat()
         return None
 
     @classmethod
     async def sync_transactions(
         cls, client: UpClient, account_ids=None, windowed: bool = False, window_days: int = None
     ):
-        accounts = account_ids or (
-            await client.session.execute(select(Accounts.id, Accounts.display_name))
-        ).all()
+        accounts = account_ids or (await client.session.execute(select(Accounts.id, Accounts.display_name))).all()
 
         # determine each account's `since` param up front, sequentially, before any
         # concurrent work starts touching the shared session
@@ -375,14 +374,14 @@ class Transactions(base):
     def _day_windows(cls, since: str, window_days: int = None, until: str = None) -> list[tuple[str, str]]:
         "carve [since, until or now] into window_days-wide (since, until) pairs to fetch concurrently"
         window_days = window_days or cls.WINDOW_SIZE_DAYS
-        window_start = datetime.datetime.strptime(since, cls.DATETIME_FORMAT)
-        end = datetime.datetime.strptime(until, cls.DATETIME_FORMAT) if until else datetime.datetime.now()
+        window_start = datetime.datetime.fromisoformat(since)
+        end = datetime.datetime.fromisoformat(until) if until else datetime.datetime.now(datetime.timezone.utc)
         windows = []
         while window_start < end:
             window_end = min(window_start + datetime.timedelta(days=window_days), end)
-            windows.append((window_start.strftime(cls.DATETIME_FORMAT), window_end.strftime(cls.DATETIME_FORMAT)))
+            windows.append((window_start.isoformat(), window_end.isoformat()))
             window_start = window_end
-        return windows or [(since, end.strftime(cls.DATETIME_FORMAT))]
+        return windows or [(since, end.isoformat())]
 
     @classmethod
     async def _fetch_transactions_for_window(
@@ -451,8 +450,9 @@ class Transactions(base):
             # go back a few extra days rather than the exact max - transactions can sit as
             # HELD and settle later without their created_at changing, so if we started from
             # the exact max we'd never see that settlement
-            return (res - datetime.timedelta(days=cls.SETTLEMENT_BUFFER_DAYS)).strftime(cls.DATETIME_FORMAT)
-        return (datetime.datetime.now() - datetime.timedelta(days=cls.DEFAULT_LOOKBACK)).strftime(cls.DATETIME_FORMAT)
+            return (res - datetime.timedelta(days=cls.SETTLEMENT_BUFFER_DAYS)).isoformat()
+        cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=cls.DEFAULT_LOOKBACK)
+        return cutoff.isoformat()
 
     @classmethod
     def parse_transaction(cls, transaction: dict, account_id: str) -> Transactions:

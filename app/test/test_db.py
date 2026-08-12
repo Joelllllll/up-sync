@@ -148,14 +148,14 @@ class TestTransactions:
     async def test_determine_account_filter_since_param_start_date_takes_precedence(self):
         "start_date should win over lookback and over the account's last transaction date"
         await setup_test_db()
-        start_date = datetime.datetime(2025, 12, 1)
+        start_date = datetime.datetime(2025, 12, 1, tzinfo=datetime.timezone.utc)
         client = UpClient(os.environ["UP_TOKEN"], lookback=7, start_date=start_date)
         date_result = await Transactions.determine_account_filter_since_param(client, "123", self.session)
         assert date_result == "2025-12-01T00:00:00+00:00"
         await client.session.close()
 
     async def test_determine_account_filter_until_param_with_end_date(self):
-        client = UpClient(os.environ["UP_TOKEN"], end_date=datetime.datetime(2026, 1, 1))
+        client = UpClient(os.environ["UP_TOKEN"], end_date=datetime.datetime(2026, 1, 1, tzinfo=datetime.timezone.utc))
         assert Transactions.determine_account_filter_until_param(client) == "2026-01-01T00:00:00+00:00"
         await client.session.close()
 
@@ -175,7 +175,7 @@ class TestTransactions:
         ]
 
     def test_day_windows_defaults_to_now_without_until(self):
-        fixed_now = datetime.datetime(2025, 12, 10)
+        fixed_now = datetime.datetime(2025, 12, 10, tzinfo=datetime.timezone.utc)
 
         class FixedDateTime(datetime.datetime):
             @classmethod
