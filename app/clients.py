@@ -203,7 +203,6 @@ class Accounts(base):
         LOG.info("\n💳💳💳💳💳💳💳💳💳💳💳💳💳💳💳💳")
         LOG.info("Syncing Accounts")
         LOG.info("💳💳💳💳💳💳💳💳💳💳💳💳💳💳💳💳")
-        # TODO move this to a method on  accounts class
         total = 0
         for res in client._get_request(endpoint="/accounts"):
             accounts = [Accounts.parse_account(lst) for lst in res.get("data", [])]
