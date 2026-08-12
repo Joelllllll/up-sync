@@ -328,18 +328,36 @@ class Transactions(base):
         # windows are in flight at once, not MAX_CONCURRENT_REQUESTS per account
         semaphore = asyncio.Semaphore(cls.MAX_CONCURRENT_REQUESTS)
         async with aiohttp.ClientSession() as http_session:
-            cors = [
-                cls._fetch_transactions_for_window(client, http_session, semaphore, account, since, until)
+            windows = [
+                (account, since, until)
                 for account in accounts
                 for since, until in windows_for(since_by_account_id[account._mapping["id"]])
             ]
-            results = await asyncio.gather(*cors)
+            cors = [
+                cls._fetch_transactions_for_window(client, http_session, semaphore, account, since, until)
+                for account, since, until in windows
+            ]
+            # return_exceptions=True: one window/account failing (bad row, exhausted retries,
+            # whatever) must not tear down the shared http_session out from under every other
+            # still-running window, which would truncate unrelated accounts' syncs too
+            results = await asyncio.gather(*cors, return_exceptions=True)
 
         counts_by_account_id: dict[str, int] = {}
-        for account_id, count in results:
+        failed_account_ids: set[str] = set()
+        for (account, since, until), result in zip(windows, results):
+            account_id = account._mapping["id"]
+            if isinstance(result, Exception):
+                failed_account_ids.add(account_id)
+                LOG.error(f"{account._mapping['display_name']}: failed syncing {since} to {until or 'now'}: {result}")
+                continue
+            _, count = result
             counts_by_account_id[account_id] = counts_by_account_id.get(account_id, 0) + count
+
         for account_id, count in counts_by_account_id.items():
             LOG.info(f"Successfully synced {count} transactions for account {account_id}")
+
+        if failed_account_ids:
+            raise RuntimeError(f"Failed to sync transactions for accounts: {', '.join(sorted(failed_account_ids))}")
 
     @classmethod
     def _day_windows(cls, since: str, window_days: int = None, until: str = None) -> list[tuple[str, str]]:
