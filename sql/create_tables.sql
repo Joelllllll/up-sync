@@ -10,7 +10,7 @@ CREATE TABLE accounts (
     currency VARCHAR(255),
     value_str VARCHAR(255),
     value_base INTEGER,
-    created_at TIMESTAMP
+    created_at TIMESTAMPTZ
 );
 
 CREATE TABLE transactions (
@@ -25,8 +25,8 @@ CREATE TABLE transactions (
     value_str VARCHAR(255),
     value_base INTEGER,
     card_purchase_suffix VARCHAR(255),
-    settled_at TIMESTAMP,
-    created_at TIMESTAMP,
+    settled_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ,
    CONSTRAINT fk_accounts
       FOREIGN KEY(account_id) 
         REFERENCES accounts(id)

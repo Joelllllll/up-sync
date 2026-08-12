@@ -10,8 +10,9 @@ from typing import Generator
 
 import aiohttp
 import requests
-from sqlalchemy import Boolean, Column, ForeignKey, Integer, Numeric, String, create_engine, func
-from sqlalchemy.orm import Session, declarative_base, sessionmaker
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, Numeric, String, func, select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.orm import declarative_base
 
 logging.basicConfig(level=logging.INFO)
 LOG = logging.getLogger(__name__)
@@ -25,6 +26,10 @@ RETRY_BACKOFF_SECONDS = 1
 RATE_LIMIT_BACKOFF_SECONDS = [60, 300, 1200, 3600]  # 1min, 5mins, 20mins, 60mins
 
 
+def parse_iso(value: str | None) -> datetime.datetime | None:
+    return datetime.datetime.fromisoformat(value) if value else None
+
+
 def sanitize(record: dict):
     try:
         record.pop("_sa_instance_state")
@@ -35,8 +40,8 @@ def sanitize(record: dict):
 
 class DBClient:
     def __init__(self):
-        db = create_engine(DBClient.db_string())
-        self.session = sessionmaker(db)()
+        engine = create_async_engine(DBClient.db_string())
+        self.session = async_sessionmaker(engine)()
 
     @classmethod
     def db_string(cls):
@@ -45,7 +50,7 @@ class DBClient:
         HOST = os.environ["POSTGRES_HOST"]
         PORT = os.environ["POSTGRES_PORT"]
         DB_NAME = TEST_DATABASE if os.environ["env"] == "dev" else os.environ["POSTGRES_DB"]
-        return f"postgresql://{USERNAME}:{PASSWORD}@{HOST}:{PORT}/{DB_NAME}"
+        return f"postgresql+asyncpg://{USERNAME}:{PASSWORD}@{HOST}:{PORT}/{DB_NAME}"
 
 
 class UpClient:
@@ -196,50 +201,52 @@ class Accounts(base):
     currency = Column(String)
     value_str = Column(String)
     value_base = Column(Integer)
-    created_at = Column(String)
+    created_at = Column(DateTime(timezone=True))
 
     @classmethod
-    def sync_accounts(cls, client: UpClient):
+    async def sync_accounts(cls, client: UpClient):
         LOG.info("\n💳💳💳💳💳💳💳💳💳💳💳💳💳💳💳💳")
         LOG.info("Syncing Accounts")
         LOG.info("💳💳💳💳💳💳💳💳💳💳💳💳💳💳💳💳")
         total = 0
         for res in client._get_request(endpoint="/accounts"):
             accounts = [Accounts.parse_account(lst) for lst in res.get("data", [])]
-            Accounts.insert_many(client.session, accounts)
+            await Accounts.insert_many(client.session, accounts)
             total += len(accounts)
         LOG.info("💳💳💳💳💳💳💳💳💳💳💳💳💳💳💳💳")
         LOG.info(f"Successfully synced {total} accounts")
         LOG.info("💳💳💳💳💳💳💳💳💳💳💳💳💳💳💳💳")
 
     @classmethod
-    def insert(cls, session: Session, row: Accounts):
+    async def insert(cls, session: AsyncSession, row: Accounts):
         try:
-            session.merge(row)
-            session.commit()
+            await session.merge(row)
+            await session.commit()
         except Exception as e:
-            session.rollback()
+            await session.rollback()
             LOG.exception(e)
             raise
 
     @classmethod
-    def insert_many(cls, session: Session, rows: list[Accounts]):
+    async def insert_many(cls, session: AsyncSession, rows: list[Accounts]):
         try:
             for row in rows:
-                session.merge(row)
-            session.commit()
+                await session.merge(row)
+            await session.commit()
         except Exception as e:
-            session.rollback()
+            await session.rollback()
             LOG.exception(e)
             raise
 
     @classmethod
-    def from_id(cls, session: Session, id: str) -> Accounts:
-        return sanitize(session.query(Accounts).filter(Accounts.id == id).first())
+    async def from_id(cls, session: AsyncSession, id: str) -> Accounts:
+        result = await session.execute(select(Accounts).where(Accounts.id == id))
+        return sanitize(result.scalar_one_or_none())
 
     @classmethod
-    def all(cls, session: Session) -> list[Accounts]:
-        return [sanitize(account.__dict__) for account in session.query(Accounts).all()]
+    async def all(cls, session: AsyncSession) -> list[Accounts]:
+        result = await session.execute(select(Accounts))
+        return [sanitize(account.__dict__) for account in result.scalars().all()]
 
     @classmethod
     def parse_account(self, account: dict) -> Accounts:
@@ -253,7 +260,7 @@ class Accounts(base):
             currency=account.get("attributes", {}).get("balance", {}).get("currencyCode"),
             value_str=account.get("attributes", {}).get("balance", {}).get("value"),
             value_base=account.get("attributes", {}).get("balance", {}).get("valueInBaseUnits"),
-            created_at=account.get("attributes", {}).get("createdAt"),
+            created_at=parse_iso(account.get("attributes", {}).get("createdAt")),
         )
 
 
@@ -278,17 +285,17 @@ class Transactions(base):
     value_str = Column(String)
     value_base = Column(Integer)
     card_purchase_suffix = Column(String)
-    settled_at = Column(String)
-    created_at = Column(String)
+    settled_at = Column(DateTime(timezone=True))
+    created_at = Column(DateTime(timezone=True))
 
     @classmethod
-    def determine_account_filter_since_param(cls, client: UpClient, account_id: str, session: Session):
+    async def determine_account_filter_since_param(cls, client: UpClient, account_id: str, session: AsyncSession):
         # start_date/lookback take precedence, if neither given then look at the last date of transaction
         if client.start_date:
             return client.start_date.strftime(cls.DATETIME_FORMAT)
         if client.lookback:
             return (datetime.datetime.now() - datetime.timedelta(days=client.lookback)).strftime(cls.DATETIME_FORMAT)
-        return cls.max_transaction_date_for_account(session, account_id)
+        return await cls.max_transaction_date_for_account(session, account_id)
 
     @classmethod
     def determine_account_filter_until_param(cls, client: UpClient):
@@ -300,16 +307,17 @@ class Transactions(base):
     async def sync_transactions(
         cls, client: UpClient, account_ids=None, windowed: bool = False, window_days: int = None
     ):
-        accounts = account_ids or client.session.query(Accounts.id, Accounts.display_name).all()
+        accounts = account_ids or (
+            await client.session.execute(select(Accounts.id, Accounts.display_name))
+        ).all()
 
         # determine each account's `since` param up front, sequentially, before any
         # concurrent work starts touching the shared session
-        since_by_account_id = {
-            account._mapping["id"]: cls.determine_account_filter_since_param(
+        since_by_account_id = {}
+        for account in accounts:
+            since_by_account_id[account._mapping["id"]] = await cls.determine_account_filter_since_param(
                 client, account._mapping["id"], client.session
             )
-            for account in accounts
-        }
 
         until = cls.determine_account_filter_until_param(client)
 
@@ -326,6 +334,11 @@ class Transactions(base):
         # one semaphore shared across every account so at most MAX_CONCURRENT_REQUESTS
         # windows are in flight at once, not MAX_CONCURRENT_REQUESTS per account
         semaphore = asyncio.Semaphore(cls.MAX_CONCURRENT_REQUESTS)
+        # every window writes through the one Session on `client`, so this enforces that only
+        # one window is ever mid-write at a time - currently true by luck (insert_many has no
+        # await in it, so nothing yields control mid-transaction), but that's fragile and this
+        # makes it a guarantee instead
+        write_lock = asyncio.Lock()
         async with aiohttp.ClientSession() as http_session:
             windows = [
                 (account, since, until)
@@ -333,7 +346,7 @@ class Transactions(base):
                 for since, until in windows_for(since_by_account_id[account._mapping["id"]])
             ]
             cors = [
-                cls._fetch_transactions_for_window(client, http_session, semaphore, account, since, until)
+                cls._fetch_transactions_for_window(client, http_session, semaphore, write_lock, account, since, until)
                 for account, since, until in windows
             ]
             # return_exceptions=True: one window/account failing (bad row, exhausted retries,
@@ -377,6 +390,7 @@ class Transactions(base):
         client: UpClient,
         http_session: aiohttp.ClientSession,
         semaphore: asyncio.Semaphore,
+        write_lock: asyncio.Lock,
         account: Accounts,
         since: str,
         until: str | None,
@@ -394,40 +408,45 @@ class Transactions(base):
                 # so a crash partway through only loses the page in flight, not the whole sync
                 page = [Transactions.parse_transaction(lst, account_id) for lst in record.get("data", [])]
                 if page:
-                    Transactions.insert_many(client.session, page)
+                    async with write_lock:
+                        await Transactions.insert_many(client.session, page)
                     count += len(page)
         if count:
             LOG.info(f"{account._mapping['display_name']}: got {count} transactions, {since} to {until or 'now'}")
         return account_id, count
 
     @classmethod
-    def insert(cls, session: Session, row: Transactions):
+    async def insert(cls, session: AsyncSession, row: Transactions):
         try:
-            session.merge(row)
-            session.commit()
+            await session.merge(row)
+            await session.commit()
         except Exception as e:
-            session.rollback()
+            await session.rollback()
             LOG.exception(e)
             raise
 
     @classmethod
-    def insert_many(cls, session: Session, rows: list[Transactions]):
+    async def insert_many(cls, session: AsyncSession, rows: list[Transactions]):
         try:
             for row in rows:
-                session.merge(row)
-            session.commit()
+                await session.merge(row)
+            await session.commit()
         except Exception as e:
-            session.rollback()
+            await session.rollback()
             LOG.exception(e)
             raise
 
     @classmethod
-    def all(cls, session: Session) -> list[Transactions]:
-        return [sanitize(account.__dict__) for account in session.query(Transactions).all()]
+    async def all(cls, session: AsyncSession) -> list[Transactions]:
+        result = await session.execute(select(Transactions))
+        return [sanitize(account.__dict__) for account in result.scalars().all()]
 
     @classmethod
-    def max_transaction_date_for_account(cls, session: Session, account_id: str):
-        res = session.query(func.max(Transactions.created_at)).filter(Transactions.account_id == account_id).scalar()
+    async def max_transaction_date_for_account(cls, session: AsyncSession, account_id: str):
+        result = await session.execute(
+            select(func.max(Transactions.created_at)).where(Transactions.account_id == account_id)
+        )
+        res = result.scalar()
         if res:
             # go back a few extra days rather than the exact max - transactions can sit as
             # HELD and settle later without their created_at changing, so if we started from
@@ -450,6 +469,6 @@ class Transactions(base):
             value_str=transaction.get("attributes", {}).get("amount", {}).get("value"),
             value_base=transaction.get("attributes", {}).get("amount", {}).get("valueInBaseUnits"),
             card_purchase_suffix=purchase_method.get("cardNumberSuffix") if purchase_method else None,
-            settled_at=transaction.get("attributes", {}).get("settledAt"),
-            created_at=transaction.get("attributes", {}).get("createdAt"),
+            settled_at=parse_iso(transaction.get("attributes", {}).get("settledAt")),
+            created_at=parse_iso(transaction.get("attributes", {}).get("createdAt")),
         )
