@@ -89,6 +89,8 @@ def parse_args():
         parser.error("--lookback cannot be used with --start-date/--end-date")
     if bool(args.start_date) != bool(args.end_date):
         parser.error("--start-date and --end-date must be used together")
+    if args.window_days and not args.windowed:
+        parser.error("--window-days requires --async")
     return args
 
 if __name__ == "__main__":
