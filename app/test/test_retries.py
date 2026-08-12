@@ -2,7 +2,7 @@ import asyncio
 import json
 import os
 import sys
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 # makes it access the test db instead
 os.environ["env"] = "dev"
@@ -13,7 +13,7 @@ import aiohttp
 import pytest
 import requests
 
-from app.clients import MAX_RETRIES, UpClient
+from app.clients import MAX_RETRIES, RATE_LIMIT_BACKOFF_SECONDS, UpClient
 
 
 def make_client():
@@ -85,8 +85,10 @@ class TestSyncRetries:
             mock_res.json.return_value = result
             return mock_res
 
-        with patch("app.clients.requests.get", side_effect=fake_get) as mock_get, \
-             patch("app.clients.time.sleep") as mock_sleep:
+        with (
+            patch("app.clients.requests.get", side_effect=fake_get) as mock_get,
+            patch("app.clients.time.sleep") as mock_sleep,
+        ):
             result = client._fetch_with_retries("http://fake", {})
 
         assert result == {"ok": True}
@@ -132,12 +134,59 @@ class TestSyncRetries:
             mock_res.raise_for_status.side_effect = requests.exceptions.HTTPError(response=mock_res)
             return mock_res
 
-        with patch("app.clients.requests.get", side_effect=fake_get) as mock_get, \
-             patch("app.clients.time.sleep"):
+        with patch("app.clients.requests.get", side_effect=fake_get) as mock_get, patch("app.clients.time.sleep"):
             with pytest.raises(requests.exceptions.HTTPError):
                 client._fetch_with_retries("http://fake", {})
 
         assert mock_get.call_count == MAX_RETRIES
+
+    def test_retries_on_429_then_succeeds(self):
+        client = make_client()
+        queue = ["429", "429", {"ok": True}]
+
+        def fake_get(url, headers=None, **extras):
+            result = queue.pop(0)
+            mock_res = MagicMock()
+            if result == "429":
+                mock_res.status_code = 429
+                mock_res.headers = {"x-ratelimit-remaining": "0"}
+                mock_res.raise_for_status.side_effect = requests.exceptions.HTTPError(response=mock_res)
+            else:
+                mock_res.raise_for_status.return_value = None
+                mock_res.json.return_value = result
+            return mock_res
+
+        # mock sleep so the test doesn't actually wait out the real backoff (up to 1 hour)
+        with (
+            patch("app.clients.requests.get", side_effect=fake_get) as mock_get,
+            patch("app.clients.time.sleep") as mock_sleep,
+        ):
+            result = client._fetch_with_retries("http://fake", {})
+
+        assert result == {"ok": True}
+        assert mock_get.call_count == 3
+        assert mock_sleep.call_args_list == [call(s) for s in RATE_LIMIT_BACKOFF_SECONDS[:2]]
+
+    def test_gives_up_after_rate_limit_backoff_exhausted(self):
+        client = make_client()
+
+        def fake_get(url, headers=None, **extras):
+            mock_res = MagicMock()
+            mock_res.status_code = 429
+            mock_res.headers = {}
+            mock_res.raise_for_status.side_effect = requests.exceptions.HTTPError(response=mock_res)
+            return mock_res
+
+        # mock sleep so the test doesn't actually wait out the real backoff (up to 1 hour)
+        with (
+            patch("app.clients.requests.get", side_effect=fake_get) as mock_get,
+            patch("app.clients.time.sleep") as mock_sleep,
+        ):
+            with pytest.raises(requests.exceptions.HTTPError):
+                client._fetch_with_retries("http://fake", {})
+
+        assert mock_get.call_count == len(RATE_LIMIT_BACKOFF_SECONDS) + 1
+        assert mock_sleep.call_args_list == [call(s) for s in RATE_LIMIT_BACKOFF_SECONDS]
 
     def test_raises_on_malformed_json_response(self):
         "a non-JSON body should be treated like any other request failure: retried, then raised"
@@ -149,8 +198,7 @@ class TestSyncRetries:
             mock_res.json.side_effect = requests.exceptions.JSONDecodeError("Expecting value", "", 0)
             return mock_res
 
-        with patch("app.clients.requests.get", side_effect=fake_get) as mock_get, \
-             patch("app.clients.time.sleep"):
+        with patch("app.clients.requests.get", side_effect=fake_get) as mock_get, patch("app.clients.time.sleep"):
             with pytest.raises(requests.exceptions.JSONDecodeError):
                 client._fetch_with_retries("http://fake", {})
 
@@ -199,6 +247,36 @@ class TestAsyncRetries:
         with patch("app.clients.asyncio.sleep", new_callable=AsyncMock):
             with pytest.raises(aiohttp.ClientResponseError):
                 asyncio.run(client._async_fetch_with_retries(session, "http://fake", {}))
+
+    def test_retries_on_429_then_succeeds(self):
+        client = make_client()
+        responses = [
+            FakeResponse(exc=client_response_error(429)),
+            FakeResponse(exc=client_response_error(429)),
+            FakeResponse(json_data={"ok": True}),
+        ]
+        session = FakeClientSession(responses)
+
+        # mock sleep so the test doesn't actually wait out the real backoff (up to 1 hour)
+        with patch("app.clients.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+            result = asyncio.run(client._async_fetch_with_retries(session, "http://fake", {}))
+
+        assert result == {"ok": True}
+        assert len(session.get_calls) == 3
+        assert mock_sleep.call_args_list == [call(s) for s in RATE_LIMIT_BACKOFF_SECONDS[:2]]
+
+    def test_gives_up_after_rate_limit_backoff_exhausted(self):
+        client = make_client()
+        responses = [client_response_error(429) for _ in range(len(RATE_LIMIT_BACKOFF_SECONDS) + 1)]
+        session = FakeClientSession([FakeResponse(exc=e) for e in responses])
+
+        # mock sleep so the test doesn't actually wait out the real backoff (up to 1 hour)
+        with patch("app.clients.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+            with pytest.raises(aiohttp.ClientResponseError):
+                asyncio.run(client._async_fetch_with_retries(session, "http://fake", {}))
+
+        assert len(session.get_calls) == len(RATE_LIMIT_BACKOFF_SECONDS) + 1
+        assert mock_sleep.call_args_list == [call(s) for s in RATE_LIMIT_BACKOFF_SECONDS]
 
     def test_raises_on_malformed_json_response(self):
         "a body that fails to parse as JSON isn't an aiohttp.ClientError, so it isn't retried at all"

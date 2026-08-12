@@ -3,6 +3,7 @@
 
 import argparse
 import asyncio
+import datetime
 import logging
 import os
 import sys
@@ -15,8 +16,9 @@ logging.basicConfig(level=logging.INFO)
 LOG = logging.getLogger(__name__)
 
 class UpSync:
-    def __init__(self, token: str, lookback: int = None):
-        self.client = UpClient(token, lookback)
+    def __init__(self, token: str, lookback: int = None, start_date: datetime.datetime = None,
+                 end_date: datetime.datetime = None):
+        self.client = UpClient(token, lookback, start_date, end_date)
 
     def authenticate(self):
         try:
@@ -37,6 +39,12 @@ class UpSync:
         self.sync_transactions(windowed=windowed, window_days=window_days)
         LOG.info("Sync Complete")
 
+def valid_date(value: str) -> datetime.datetime:
+    try:
+        return datetime.datetime.strptime(value, "%Y-%m-%d")
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"Invalid date '{value}', expected YYYY-MM-DD")
+
 def parse_args():
     parser = argparse.ArgumentParser(description="Sync Up data")
     parser.add_argument(
@@ -45,6 +53,22 @@ def parse_args():
         required=False,
         default=None,
         help="Number of days to look back for transactions"
+    )
+    parser.add_argument(
+        "--start-date",
+        type=valid_date,
+        required=False,
+        default=None,
+        help="Start date (YYYY-MM-DD, inclusive) for transactions. Requires --end-date, "
+             "cannot be used with --lookback"
+    )
+    parser.add_argument(
+        "--end-date",
+        type=valid_date,
+        required=False,
+        default=None,
+        help="End date (YYYY-MM-DD, exclusive) for transactions. Requires --start-date, "
+             "cannot be used with --lookback"
     )
     parser.add_argument(
         "--async",
@@ -60,10 +84,15 @@ def parse_args():
         default=None,
         help=f"Window size in days for --async transaction fetching (default {Transactions.WINDOW_SIZE_DAYS})"
     )
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.lookback and (args.start_date or args.end_date):
+        parser.error("--lookback cannot be used with --start-date/--end-date")
+    if bool(args.start_date) != bool(args.end_date):
+        parser.error("--start-date and --end-date must be used together")
+    return args
 
 if __name__ == "__main__":
     args = parse_args()
-    up_sync = UpSync(os.environ["UP_TOKEN"], args.lookback)
+    up_sync = UpSync(os.environ["UP_TOKEN"], args.lookback, args.start_date, args.end_date)
     up_sync.sync(windowed=args.windowed, window_days=args.window_days)
 

@@ -1,3 +1,4 @@
+import datetime
 import os
 import secrets
 import sys
@@ -8,6 +9,7 @@ os.environ["env"] = "dev"
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "../../"))
 import aiohttp
+import pytest
 
 from app import up_sync
 from app.clients import Accounts, DBClient, Transactions, UpClient
@@ -132,3 +134,49 @@ class TestSync:
                     "statusEmoji": "⚡️",
                 },
             }
+
+
+class TestParseArgs:
+    def test_start_and_end_date_parsed(self):
+        with patch("sys.argv", ["up_sync.py", "--start-date", "2025-12-01", "--end-date", "2026-01-01"]):
+            args = up_sync.parse_args()
+        assert args.start_date == datetime.datetime(2025, 12, 1)
+        assert args.end_date == datetime.datetime(2026, 1, 1)
+        assert args.lookback is None
+
+    def test_lookback_alone_still_works(self):
+        with patch("sys.argv", ["up_sync.py", "--lookback", "30"]):
+            args = up_sync.parse_args()
+        assert args.lookback == 30
+        assert args.start_date is None
+        assert args.end_date is None
+
+    def test_no_args_still_works(self):
+        with patch("sys.argv", ["up_sync.py"]):
+            args = up_sync.parse_args()
+        assert args.lookback is None
+        assert args.start_date is None
+        assert args.end_date is None
+
+    def test_lookback_and_start_date_rejected(self):
+        argv = ["up_sync.py", "--lookback", "30", "--start-date", "2025-12-01", "--end-date", "2026-01-01"]
+        with patch("sys.argv", argv), pytest.raises(SystemExit):
+            up_sync.parse_args()
+
+    def test_lookback_and_end_date_rejected(self):
+        argv = ["up_sync.py", "--lookback", "30", "--end-date", "2026-01-01"]
+        with patch("sys.argv", argv), pytest.raises(SystemExit):
+            up_sync.parse_args()
+
+    def test_start_date_without_end_date_rejected(self):
+        with patch("sys.argv", ["up_sync.py", "--start-date", "2025-12-01"]), pytest.raises(SystemExit):
+            up_sync.parse_args()
+
+    def test_end_date_without_start_date_rejected(self):
+        with patch("sys.argv", ["up_sync.py", "--end-date", "2026-01-01"]), pytest.raises(SystemExit):
+            up_sync.parse_args()
+
+    def test_invalid_date_format_rejected(self):
+        argv = ["up_sync.py", "--start-date", "01-12-2025", "--end-date", "2026-01-01"]
+        with patch("sys.argv", argv), pytest.raises(SystemExit):
+            up_sync.parse_args()

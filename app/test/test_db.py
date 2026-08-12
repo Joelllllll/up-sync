@@ -104,11 +104,6 @@ class TestTransactions:
 
     session = DBClient().session
 
-    def test_min_transaction_date_for_account(self):
-        setup_test_db()
-        assert Transactions.min_transaction_date_for_account(self.session, "123") == "2020-01-01T00:00:00+00:00"
-        assert Transactions.min_transaction_date_for_account(self.session, "321") == "2020-01-01T00:00:00+00:00"
-
     def test_max_transaction_date_for_account(self):
         setup_test_db()
         assert Transactions.max_transaction_date_for_account(self.session, "123") == "2023-12-27T00:00:00+00:00"
@@ -130,6 +125,48 @@ class TestTransactions:
         client = UpClient(os.environ["UP_TOKEN"])
         date_result = Transactions.determine_account_filter_since_param(client, "123", self.session)
         assert date_result == "2023-12-27T00:00:00+00:00"
+
+    def test_determine_account_filter_since_param_start_date_takes_precedence(self):
+        "start_date should win over lookback and over the account's last transaction date"
+        setup_test_db()
+        start_date = datetime.datetime(2025, 12, 1)
+        client = UpClient(os.environ["UP_TOKEN"], lookback=7, start_date=start_date)
+        date_result = Transactions.determine_account_filter_since_param(client, "123", self.session)
+        assert date_result == "2025-12-01T00:00:00+00:00"
+
+    def test_determine_account_filter_until_param_with_end_date(self):
+        client = UpClient(os.environ["UP_TOKEN"], end_date=datetime.datetime(2026, 1, 1))
+        assert Transactions.determine_account_filter_until_param(client) == "2026-01-01T00:00:00+00:00"
+
+    def test_determine_account_filter_until_param_no_end_date(self):
+        client = UpClient(os.environ["UP_TOKEN"])
+        assert Transactions.determine_account_filter_until_param(client) is None
+
+    def test_day_windows_respects_until(self):
+        "windows should stop at the given until instead of running to now"
+        since = "2025-12-01T00:00:00+00:00"
+        until = "2025-12-15T00:00:00+00:00"
+        windows = Transactions._day_windows(since, window_days=7, until=until)
+        assert windows == [
+            ("2025-12-01T00:00:00+00:00", "2025-12-08T00:00:00+00:00"),
+            ("2025-12-08T00:00:00+00:00", "2025-12-15T00:00:00+00:00"),
+        ]
+
+    def test_day_windows_defaults_to_now_without_until(self):
+        fixed_now = datetime.datetime(2025, 12, 10)
+
+        class FixedDateTime(datetime.datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return fixed_now if tz is None else fixed_now.astimezone(tz)
+
+        since = "2025-12-01T00:00:00+00:00"
+        with patch("datetime.datetime", FixedDateTime):
+            windows = Transactions._day_windows(since, window_days=7)
+        assert windows == [
+            ("2025-12-01T00:00:00+00:00", "2025-12-08T00:00:00+00:00"),
+            ("2025-12-08T00:00:00+00:00", "2025-12-10T00:00:00+00:00"),
+        ]
 
 
 class TestUpClient:

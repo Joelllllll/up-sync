@@ -22,6 +22,8 @@ VERSION = "v1"
 
 MAX_RETRIES = 3
 RETRY_BACKOFF_SECONDS = 1
+RATE_LIMIT_BACKOFF_SECONDS = [60, 300, 1200, 3600]  # 1min, 5mins, 20mins, 60mins
+
 
 def sanitize(record: dict):
     try:
@@ -29,6 +31,7 @@ def sanitize(record: dict):
     except AttributeError:
         pass
     return record
+
 
 class DBClient:
     def __init__(self):
@@ -44,15 +47,20 @@ class DBClient:
         DB_NAME = TEST_DATABASE if os.environ["env"] == "dev" else os.environ["POSTGRES_DB"]
         return f"postgresql://{USERNAME}:{PASSWORD}@{HOST}:{PORT}/{DB_NAME}"
 
-class UpClient():
+
+class UpClient:
     class UpAuthError(Exception):
         pass
 
-    def __init__(self, token: str, lookback: int = None):
+    def __init__(
+        self, token: str, lookback: int = None, start_date: datetime.datetime = None, end_date: datetime.datetime = None
+    ):
         self.token = token
         self.headers = {"Authorization": f"Bearer {self.token}"}
         self.authenticate()
         self.lookback = lookback
+        self.start_date = start_date
+        self.end_date = end_date
         self.session = DBClient().session
 
     def authenticate(self):
@@ -80,7 +88,7 @@ class UpClient():
             LOG.info(f"Successfully fetched {url.split('?')[0]}, page {page}")
             yield res_json
 
-            if (next_page := res_json.get("links", {}).get("next")):
+            if next_page := res_json.get("links", {}).get("next"):
                 url = next_page
                 page += 1
                 LOG.info(f"Fetching next page {page}")
@@ -89,7 +97,9 @@ class UpClient():
             break
 
     async def _async_fetch_with_retries(self, session: aiohttp.ClientSession, url: str, extras: dict) -> dict:
-        for attempt in range(1, MAX_RETRIES + 1):
+        attempt = 0
+        rate_limit_attempt = 0
+        while True:
             try:
                 async with session.get(url, headers=self.headers, **extras) as res:
                     res_json = await res.json()
@@ -98,12 +108,23 @@ class UpClient():
             except aiohttp.ClientResponseError as e:
                 if e.status == 401:
                     raise self.UpAuthError("Failed to authenticate")
-                # 429 is Up's rate limit response, worth backing off and retrying same as a 5xx
-                if (e.status < 500 and e.status != 429) or attempt == MAX_RETRIES:
+                if e.status == 429:
+                    if rate_limit_attempt >= len(RATE_LIMIT_BACKOFF_SECONDS):
+                        raise
+                    wait = RATE_LIMIT_BACKOFF_SECONDS[rate_limit_attempt]
+                    rate_limit_attempt += 1
+                    LOG.warning(
+                        f"Rate limited, waiting {wait}s "
+                        f"(attempt {rate_limit_attempt}/{len(RATE_LIMIT_BACKOFF_SECONDS)})"
+                    )
+                    await asyncio.sleep(wait)
+                    continue
+                if e.status < 500 or attempt == MAX_RETRIES - 1:
                     raise
-            except aiohttp.ClientError as e:
-                if attempt == MAX_RETRIES:
+            except aiohttp.ClientError:
+                if attempt == MAX_RETRIES - 1:
                     raise
+            attempt += 1
             LOG.warning(f"Request to {url} failed (attempt {attempt}/{MAX_RETRIES}), retrying")
             await asyncio.sleep(RETRY_BACKOFF_SECONDS * attempt)
 
@@ -117,7 +138,7 @@ class UpClient():
             LOG.info(f"Successfully fetched {url.split('?')[0]}, page {page}")
             yield res_json
 
-            if (next_page := res_json.get("links", {}).get("next")):
+            if next_page := res_json.get("links", {}).get("next"):
                 url = next_page
                 page += 1
                 LOG.info(f"Fetching next page {page}")
@@ -126,7 +147,9 @@ class UpClient():
             break
 
     def _fetch_with_retries(self, url: str, extras: dict) -> dict:
-        for attempt in range(1, MAX_RETRIES + 1):
+        attempt = 0
+        rate_limit_attempt = 0
+        while True:
             try:
                 res = requests.get(url, headers=self.headers, **extras)
                 res.raise_for_status()
@@ -135,16 +158,30 @@ class UpClient():
                 status = e.response.status_code
                 if status == 401:
                     raise self.UpAuthError("Failed to authenticate")
-                # 429 is Up's rate limit response, worth backing off and retrying same as a 5xx
-                if (status < 500 and status != 429) or attempt == MAX_RETRIES:
+                if status == 429:
+                    if rate_limit_attempt >= len(RATE_LIMIT_BACKOFF_SECONDS):
+                        raise
+                    wait = RATE_LIMIT_BACKOFF_SECONDS[rate_limit_attempt]
+                    rate_limit_attempt += 1
+                    LOG.warning(f"Got 429 for {url}, headers: {dict(e.response.headers)}")
+                    LOG.warning(
+                        f"Rate limited, waiting {wait}s "
+                        f"(attempt {rate_limit_attempt}/{len(RATE_LIMIT_BACKOFF_SECONDS)})"
+                    )
+                    time.sleep(wait)
+                    continue
+                if status < 500 or attempt == MAX_RETRIES - 1:
                     raise
-            except requests.exceptions.RequestException as e:
-                if attempt == MAX_RETRIES:
+            except requests.exceptions.RequestException:
+                if attempt == MAX_RETRIES - 1:
                     raise
+            attempt += 1
             LOG.warning(f"Request to {url} failed (attempt {attempt}/{MAX_RETRIES}), retrying")
             time.sleep(RETRY_BACKOFF_SECONDS * attempt)
 
+
 base = declarative_base()
+
 
 @dataclass
 class Accounts(base):
@@ -161,13 +198,12 @@ class Accounts(base):
     value_base = Column(Integer)
     created_at = Column(String)
 
-
     @classmethod
     def sync_accounts(cls, client: UpClient):
         LOG.info("\n💳💳💳💳💳💳💳💳💳💳💳💳💳💳💳💳")
         LOG.info("Syncing Accounts")
         LOG.info("💳💳💳💳💳💳💳💳💳💳💳💳💳💳💳💳")
-        #TODO move this to a method on  accounts class
+        # TODO move this to a method on  accounts class
         total = 0
         for res in client._get_request(endpoint="/accounts"):
             accounts = [Accounts.parse_account(lst) for lst in res.get("data", [])]
@@ -198,7 +234,6 @@ class Accounts(base):
             LOG.exception(e)
             raise
 
-
     @classmethod
     def from_id(cls, session: Session, id: str) -> Accounts:
         return sanitize(session.query(Accounts).filter(Accounts.id == id).first())
@@ -219,7 +254,7 @@ class Accounts(base):
             currency=account.get("attributes", {}).get("balance", {}).get("currencyCode"),
             value_str=account.get("attributes", {}).get("balance", {}).get("value"),
             value_base=account.get("attributes", {}).get("balance", {}).get("valueInBaseUnits"),
-            created_at=account.get("attributes", {}).get("createdAt")
+            created_at=account.get("attributes", {}).get("createdAt"),
         )
 
 
@@ -249,10 +284,18 @@ class Transactions(base):
 
     @classmethod
     def determine_account_filter_since_param(cls, client: UpClient, account_id: str, session: Session):
-        # lookback takes precedence, if not given then look at the last date of transaction
+        # start_date/lookback take precedence, if neither given then look at the last date of transaction
+        if client.start_date:
+            return client.start_date.strftime(cls.DATETIME_FORMAT)
         if client.lookback:
             return (datetime.datetime.now() - datetime.timedelta(days=client.lookback)).strftime(cls.DATETIME_FORMAT)
         return cls.max_transaction_date_for_account(session, account_id)
+
+    @classmethod
+    def determine_account_filter_until_param(cls, client: UpClient):
+        if client.end_date:
+            return client.end_date.strftime(cls.DATETIME_FORMAT)
+        return None
 
     @classmethod
     async def sync_transactions(
@@ -269,10 +312,14 @@ class Transactions(base):
             for account in accounts
         }
 
+        until = cls.determine_account_filter_until_param(client)
+
         # windowed splits each account's range into day-sized chunks fetched concurrently;
-        # otherwise each account is a single (since, None) window, paginated via cursor as before
+        # otherwise each account is a single (since, until) window, paginated via cursor as before
         windows_for = (
-            (lambda since: cls._day_windows(since, window_days)) if windowed else (lambda since: [(since, None)])
+            (lambda since: cls._day_windows(since, window_days, until))
+            if windowed
+            else (lambda since: [(since, until)])
         )
 
         # one connection, reused across every request, instead of opening a new
@@ -295,17 +342,17 @@ class Transactions(base):
             LOG.info(f"Successfully synced {count} transactions for account {account_id}")
 
     @classmethod
-    def _day_windows(cls, since: str, window_days: int = None) -> list[tuple[str, str]]:
-        "carve [since, now] into window_days-wide (since, until) pairs to fetch concurrently"
+    def _day_windows(cls, since: str, window_days: int = None, until: str = None) -> list[tuple[str, str]]:
+        "carve [since, until or now] into window_days-wide (since, until) pairs to fetch concurrently"
         window_days = window_days or cls.WINDOW_SIZE_DAYS
         window_start = datetime.datetime.strptime(since, cls.DATETIME_FORMAT)
-        now = datetime.datetime.now()
+        end = datetime.datetime.strptime(until, cls.DATETIME_FORMAT) if until else datetime.datetime.now()
         windows = []
-        while window_start < now:
-            window_end = min(window_start + datetime.timedelta(days=window_days), now)
+        while window_start < end:
+            window_end = min(window_start + datetime.timedelta(days=window_days), end)
             windows.append((window_start.strftime(cls.DATETIME_FORMAT), window_end.strftime(cls.DATETIME_FORMAT)))
             window_start = window_end
-        return windows or [(since, now.strftime(cls.DATETIME_FORMAT))]
+        return windows or [(since, end.strftime(cls.DATETIME_FORMAT))]
 
     @classmethod
     async def _fetch_transactions_for_window(
@@ -324,9 +371,7 @@ class Transactions(base):
         count = 0
         async with semaphore:
             async for record in client.async_get_request(
-                http_session,
-                endpoint=f"accounts/{account_id}/transactions",
-                extras={"params": params}
+                http_session, endpoint=f"accounts/{account_id}/transactions", extras={"params": params}
             ):
                 # write each page as it arrives instead of buffering the whole window in memory,
                 # so a crash partway through only loses the page in flight, not the whole sync
@@ -335,10 +380,7 @@ class Transactions(base):
                     Transactions.insert_many(client.session, page)
                     count += len(page)
         if count:
-            LOG.info(
-                f"{account._mapping['display_name']}: got {count} transactions, "
-                f"{since} to {until or 'now'}"
-            )
+            LOG.info(f"{account._mapping['display_name']}: got {count} transactions, {since} to {until or 'now'}")
         return account_id, count
 
     @classmethod
@@ -367,14 +409,8 @@ class Transactions(base):
         return [sanitize(account.__dict__) for account in session.query(Transactions).all()]
 
     @classmethod
-    def min_transaction_date_for_account(cls, session: Session, account_id: str):
-        return session.query(func.min(Transactions.created_at)).\
-            filter(Transactions.account_id == account_id).scalar().strftime(cls.DATETIME_FORMAT)
-
-    @classmethod
     def max_transaction_date_for_account(cls, session: Session, account_id: str):
-        res = session.query(func.max(Transactions.created_at)).\
-            filter(Transactions.account_id == account_id).scalar()
+        res = session.query(func.max(Transactions.created_at)).filter(Transactions.account_id == account_id).scalar()
         if res:
             # go back a few extra days rather than the exact max - transactions can sit as
             # HELD and settle later without their created_at changing, so if we started from
