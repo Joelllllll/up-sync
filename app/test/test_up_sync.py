@@ -101,6 +101,29 @@ class TestSync:
                 },
             }
 
+    def test_authenticate_succeeds(self):
+        up = up_sync.UpSync(os.environ["UP_TOKEN"])
+        up.authenticate()
+        asyncio.run(up.client.session.close())
+
+    def test_authenticate_fails_exits(self):
+        up = up_sync.UpSync(os.environ["UP_TOKEN"])
+        with patch.object(up.client, "authenticate", side_effect=UpClient.UpAuthError("bad token")):
+            with pytest.raises(SystemExit):
+                up.authenticate()
+        asyncio.run(up.client.session.close())
+
+    async def test_full_sync_via_sync_method(self):
+        "exercises UpSync.sync/_sync end to end, not just the individual Accounts/Transactions calls"
+        up = up_sync.UpSync(os.environ["UP_TOKEN"])
+        await up.sync()
+
+        account = await Accounts.from_id(self.session, "123")
+        assert account["id"] == "123"
+        transactions = (await self.session.execute(select(Transactions))).scalars().all()
+        assert len(transactions) == 3
+        await self.session.close()
+
 
 class TestParseArgs:
     def test_start_and_end_date_parsed(self):
@@ -145,4 +168,12 @@ class TestParseArgs:
     def test_invalid_date_format_rejected(self):
         argv = ["up_sync.py", "--start-date", "01-12-2025", "--end-date", "2026-01-01"]
         with patch("sys.argv", argv), pytest.raises(SystemExit):
+            up_sync.parse_args()
+
+    def test_window_days_without_async_rejected(self):
+        with patch("sys.argv", ["up_sync.py", "--window-days", "3"]), pytest.raises(SystemExit):
+            up_sync.parse_args()
+
+    def test_max_concurrent_without_async_rejected(self):
+        with patch("sys.argv", ["up_sync.py", "--max-concurrent", "10"]), pytest.raises(SystemExit):
             up_sync.parse_args()

@@ -29,19 +29,21 @@ class UpSync:
             LOG.info(f"Failed to authenticate with Up: {e}")
             sys.exit(1)
 
-    async def sync(self, windowed: bool = False, window_days: int = None):
+    async def sync(self, windowed: bool = False, window_days: int = None, max_concurrent: int = None):
         LOG.info("Starting Sync")
         # accounts + transactions run under one asyncio.run/event loop here - the async
         # engine's pooled connections are tied to the loop they were first used on, so
         # reusing the same client.session across two separate asyncio.run() calls would
         # hand the second one a connection bound to an already-closed loop
-        await self._sync(windowed, window_days)
+        await self._sync(windowed, window_days, max_concurrent)
         LOG.info("Sync Complete")
 
-    async def _sync(self, windowed: bool = False, window_days: int = None):
+    async def _sync(self, windowed: bool = False, window_days: int = None, max_concurrent: int = None):
         try:
             await Accounts.sync_accounts(self.client)
-            await Transactions.sync_transactions(self.client, windowed=windowed, window_days=window_days)
+            await Transactions.sync_transactions(
+                self.client, windowed=windowed, window_days=window_days, max_concurrent=max_concurrent
+            )
         finally:
             # close the session/engine while the loop that opened them is still running -
             # asyncio.run() tears the loop down right after this returns, and an asyncpg
@@ -90,6 +92,15 @@ def parse_args():
         default=None,
         help=f"Window size in days for --async transaction fetching (default {Transactions.WINDOW_SIZE_DAYS})",
     )
+    parser.add_argument(
+        "--max-concurrent",
+        type=int,
+        required=False,
+        default=None,
+        help="Max concurrent requests for --async transaction fetching "
+        f"(default {Transactions.MAX_CONCURRENT_REQUESTS}). Up rate-limits the API, so pushing this too high "
+        "will start getting requests throttled",
+    )
     args = parser.parse_args()
     if args.lookback and (args.start_date or args.end_date):
         parser.error("--lookback cannot be used with --start-date/--end-date")
@@ -97,6 +108,8 @@ def parse_args():
         parser.error("--start-date and --end-date must be used together")
     if args.window_days and not args.windowed:
         parser.error("--window-days requires --async")
+    if args.max_concurrent and not args.windowed:
+        parser.error("--max-concurrent requires --async")
     return args
 
 
@@ -104,4 +117,4 @@ if __name__ == "__main__":
     args = parse_args()
     up_sync = UpSync(os.environ["UP_TOKEN"], args.lookback, args.start_date, args.end_date)
     # start the event loop
-    asyncio.run(up_sync.sync(windowed=args.windowed, window_days=args.window_days))
+    asyncio.run(up_sync.sync(windowed=args.windowed, window_days=args.window_days, max_concurrent=args.max_concurrent))

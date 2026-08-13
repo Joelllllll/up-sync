@@ -41,7 +41,7 @@ export UP_TOKEN="xxxxxxxx"
 ```
 The `lookback` config is in days and is optional (default 30). This syncs accounts + transactions into the `accounts`/`transactions` tables.
 
-Add `--async` to split each account's transaction fetch into windows fetched concurrently instead of one cursor-paginated request per account. Window size defaults to 7 days, override with `--window-days`. Leave it at the default for typical low-volume accounts; drop it lower (e.g. 1) for an account with a lot of transactions to pull, so more windows are in flight at once instead of one big window paginating through sequentially.
+Add `--async` to split each account's transaction fetch into windows fetched concurrently instead of one cursor-paginated request per account. Window size defaults to 7 days, override with `--window-days`. Leave it at the default for typical low-volume accounts; drop it lower (e.g. 1) for an account with a lot of transactions to pull, so more windows are in flight at once instead of one big window paginating through sequentially. Concurrency is capped by `--max-concurrent` (default 5); both flags require `--async`.
 
 Use `--start-date`/`--end-date` (`YYYY-MM-DD`, start inclusive, end exclusive) instead of `--lookback` to pull a specific date range rather than up to now, e.g. to get just December:
 ```shell

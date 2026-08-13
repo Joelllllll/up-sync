@@ -306,7 +306,12 @@ class Transactions(base):
 
     @classmethod
     async def sync_transactions(
-        cls, client: UpClient, account_ids=None, windowed: bool = False, window_days: int = None
+        cls,
+        client: UpClient,
+        account_ids=None,
+        windowed: bool = False,
+        window_days: int = None,
+        max_concurrent: int = None,
     ):
         accounts = account_ids or (await client.session.execute(select(Accounts.id, Accounts.display_name))).all()
 
@@ -332,7 +337,7 @@ class Transactions(base):
         # TCP+TLS connection per request
         # one semaphore shared across every account so at most MAX_CONCURRENT_REQUESTS
         # windows are in flight at once, not MAX_CONCURRENT_REQUESTS per account
-        semaphore = asyncio.Semaphore(cls.MAX_CONCURRENT_REQUESTS)
+        semaphore = asyncio.Semaphore(max_concurrent or cls.MAX_CONCURRENT_REQUESTS)
         # every window writes through the one Session on `client`, so this enforces that only
         # one window is ever mid-write at a time - currently true by luck (insert_many has no
         # await in it, so nothing yields control mid-transaction), but that's fragile and this
